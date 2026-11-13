@@ -41,12 +41,12 @@ app.use(express.json({ limit: '2mb' }));
 // Comma-separated list is allowed, e.g. "https://svmedtech.com,https://www.svmedtech.com".
 const MARKETING_SITE_ORIGINS = (process.env.MARKETING_SITE_ORIGIN || '').split(',').map(x => x.trim().replace(/\/$/, '')).filter(Boolean);
 app.use((req, res, next) => {
-  if (req.path === '/api/public/leads' && MARKETING_SITE_ORIGINS.length) {
+  if ((req.path === '/api/public/leads' || req.path === '/api/public/schools') && MARKETING_SITE_ORIGINS.length) {
     const origin = req.headers.origin;
     if (origin && MARKETING_SITE_ORIGINS.includes(origin)) {
       res.header('Access-Control-Allow-Origin', origin);
       res.header('Vary', 'Origin');
-      res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.header('Access-Control-Allow-Methods', req.path === '/api/public/schools' ? 'GET, OPTIONS' : 'POST, OPTIONS');
       res.header('Access-Control-Allow-Headers', 'Content-Type');
     }
   }
@@ -242,6 +242,10 @@ async function ensureSchema() {
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS access_suspended BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS access_suspended_at TIMESTAMPTZ`;
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS access_suspended_reason TEXT`;
+  // "Show on website": opt-in only (default false) — a school appears on the
+  // marketing site's scrolling strip only after it has agreed and been ticked.
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS website_place TEXT`;
   await sql`
     CREATE TABLE IF NOT EXISTS school_errors (
       id TEXT PRIMARY KEY,
@@ -518,6 +522,9 @@ const PUBLIC_API_ROUTES = [
   // MARKETING_SITE_ORIGIN, not authenticated by anything else (there's no
   // school or vendor session to check; anyone can ask about the product).
   { path: '/api/public/leads', methods: ['POST'] },
+  // The marketing site's scrolling "Schools on SVM EdTech" strip: names only,
+  // and only schools whose "Show on website" tick is on. CORS-scoped like leads.
+  { path: '/api/public/schools', methods: ['GET'] },
   // Hit once a day by an external Render Cron Job, not a logged-in vendor
   // admin — authenticated by its own CRON_SECRET header instead of a
   // session cookie (see the route itself, far below).
@@ -773,6 +780,8 @@ function shapeSchool(row, errorCount24h) {
     accessSuspended: !!row.access_suspended,
     accessSuspendedAt: row.access_suspended_at,
     accessSuspendedReason: row.access_suspended_reason,
+    showOnWebsite: !!row.show_on_website,
+    websitePlace: row.website_place,
   };
 }
 
@@ -832,7 +841,7 @@ app.post('/api/schools', async (req, res) => {
     const {
       name, erpUrl, websiteUrl, status, notes, onboardedDate,
       billingPlan, billingAmount, billingCycle, contactName, contactEmail, contactPhone,
-      renderServiceId, parentSchoolId, planType, planModules,
+      renderServiceId, parentSchoolId, planType, planModules, showOnWebsite, websitePlace,
     } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'School name is required.' });
     const parentErr = await validateParentSchoolId(parentSchoolId || null, null);
@@ -846,13 +855,14 @@ app.post('/api/schools', async (req, res) => {
       INSERT INTO schools (
         id, name, erp_url, website_url, status, notes, api_key, onboarded_date,
         billing_plan, billing_amount, billing_cycle, contact_name, contact_email, contact_phone,
-        render_service_id, parent_school_id, plan_type, plan_modules
+        render_service_id, parent_school_id, plan_type, plan_modules, show_on_website, website_place
       )
       VALUES (
         ${id}, ${String(name).trim()}, ${erpUrl || null}, ${websiteUrl || null}, ${status || 'temporary'}, ${notes || null}, ${apiKey}, ${onboardedDate || null},
         ${billingPlan || null}, ${billingAmount != null && billingAmount !== '' ? Number(billingAmount) : null}, ${billingCycle || null},
         ${contactName || null}, ${contactEmail || null}, ${contactPhone || null}, ${renderServiceId ? String(renderServiceId).trim() : null},
-        ${parentSchoolId || null}, ${normalizedPlan.planType}, ${JSON.stringify(normalizedPlan.planModules)}
+        ${parentSchoolId || null}, ${normalizedPlan.planType}, ${JSON.stringify(normalizedPlan.planModules)},
+        ${showOnWebsite === true}, ${websitePlace ? String(websitePlace).trim().slice(0, 80) : null}
       )
     `;
     const rows = await sql`SELECT * FROM schools WHERE id = ${id}`;
@@ -872,7 +882,7 @@ app.put('/api/schools/:id', async (req, res) => {
     const {
       name, erpUrl, websiteUrl, status, notes, onboardedDate,
       billingPlan, billingAmount, billingCycle, contactName, contactEmail, contactPhone,
-      renderServiceId, parentSchoolId, planType, planModules,
+      renderServiceId, parentSchoolId, planType, planModules, showOnWebsite, websitePlace,
     } = req.body || {};
     // parentSchoolId: undefined means "not sent, leave as-is"; '' or null
     // means "clear it"; anything else is a candidate parent id to validate.
@@ -911,7 +921,9 @@ app.put('/api/schools/:id', async (req, res) => {
         render_service_id = ${renderServiceId != null ? (String(renderServiceId).trim() || null) : cur.render_service_id},
         parent_school_id = ${nextParentSchoolId},
         plan_type = ${nextPlanType},
-        plan_modules = ${JSON.stringify(nextPlanModules)}
+        plan_modules = ${JSON.stringify(nextPlanModules)},
+        show_on_website = ${showOnWebsite !== undefined ? showOnWebsite === true : !!cur.show_on_website},
+        website_place = ${websitePlace !== undefined ? (String(websitePlace || '').trim().slice(0, 80) || null) : cur.website_place}
       WHERE id = ${id}
     `;
     const rows = await sql`SELECT * FROM schools WHERE id = ${id}`;
@@ -1556,6 +1568,29 @@ function shapeLead(row) {
 // asks for very little (just enough to call someone back) so the form stays
 // low-friction for someone who's only curious.
 const leadHits = new Map();   // ip -> [timestamps]; at most 5 enquiries per hour from one address
+// Public, read-only: the schools the vendor has ticked "Show on website" for.
+// Returns only a display name, an optional place line and the school's public
+// website — never ids, contacts, ERP addresses, keys or anything billing-related.
+app.get('/api/public/schools', async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT name, website_place, website_url FROM schools
+      WHERE show_on_website = true AND access_suspended = false
+      ORDER BY onboarded_date ASC NULLS LAST, created_at ASC
+    `;
+    res.set('Cache-Control', 'public, max-age=300');
+    return res.status(200).json(rows.map(r => {
+      const out = { name: r.name };
+      if (r.website_place) out.place = r.website_place;
+      if (r.website_url && /^https?:\/\//i.test(r.website_url)) out.url = r.website_url;
+      return out;
+    }));
+  } catch (err) {
+    console.error('public schools error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
 app.post('/api/public/leads', async (req, res) => {
   try {
     const { schoolName, contactName, email, phone, message, website } = req.body || {};

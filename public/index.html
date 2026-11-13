@@ -491,6 +491,13 @@
         <input type="number" id="fBillingAmount" min="0" step="0.01" placeholder="e.g. 5000">
       </div>
       <div class="field">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:600;">
+          <input type="checkbox" id="fShowOnWebsite" style="width:auto;"> Show on the SVM EdTech website (scrolling "Schools on SVM EdTech" strip)
+        </label>
+        <div style="font-size:12px;color:var(--text-muted,#666);margin:4px 0 8px;">Tick only after the school has agreed to be named publicly. Only the school name, the line below and its website address are shown.</div>
+        <input type="text" id="fWebsitePlace" maxlength="80" placeholder="Line under the name, e.g. Live on SVM EdTech (optional)">
+      </div>
+      <div class="field">
         <label for="fNotes">Notes</label>
         <textarea id="fNotes" placeholder="Anything else worth remembering..."></textarea>
       </div>
@@ -1859,6 +1866,8 @@ function openEditModal(id) {
   $('#fBillingCycle').value = s.billingCycle || '';
   $('#fBillingAmount').value = s.billingAmount != null ? s.billingAmount : '';
   $('#fNotes').value = s.notes || '';
+  $('#fShowOnWebsite').checked = !!s.showOnWebsite;
+  $('#fWebsitePlace').value = s.websitePlace || '';
   $('#fApiKey').textContent = s.apiKey || '';
   $('#apiKeyField').style.display = 'block';
   if (s.apiKey) {
@@ -1961,6 +1970,8 @@ $('#schoolForm').addEventListener('submit', async (e) => {
     status: $('#fStatus').value,
     onboardedDate: $('#fOnboardedDate').value || null,
     notes: $('#fNotes').value,
+    showOnWebsite: $('#fShowOnWebsite').checked,
+    websitePlace: $('#fWebsitePlace').value.trim(),
     contactName: $('#fContactName').value,
     contactEmail: $('#fContactEmail').value,
     contactPhone: $('#fContactPhone').value,
