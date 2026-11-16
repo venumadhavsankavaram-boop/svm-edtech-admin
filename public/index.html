@@ -9,10 +9,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root{
-    --navy:#1F2A6B; --navy-soft:#2A3680; --ink:#14182B; --ink-soft:#5A5F77; --border:#E2DED2;
-    --bg:#F6F4EE; --panel:#FFFFFF; --accent:#A85F0B; --good:#1B9C6E; --warn:#C98B12; --bad:#D1305A;
+    --navy:#1F2A6B; --navy-soft:#2A3680; --ink:#14182B; --ink-soft:#5A5F77; --border:#D9D3C4;
+    --bg:#FBF8F2; --panel:#FFFFFF; --accent:#A85F0B; --good:#1B9C6E; --warn:#C98B12; --bad:#D1305A;
     --shadow:0 10px 30px -16px rgba(22,20,58,0.22);
   }
   *{box-sizing:border-box;}
@@ -257,7 +258,7 @@
 <div id="appShell">
   <header class="top">
     <div>
-      <h1 class="brand">SVM EdTech<small>ADMIN</small></h1>
+      <h1 class="brand"><img src="/svm-logo-mark-white.svg" alt="" style="height:26px;vertical-align:-6px;margin-right:8px">SVM EdTech<small>ADMIN</small></h1>
       <div class="sub">Schools, leads, billing and support in one place</div>
     </div>
     <div class="hdr-right">
@@ -466,7 +467,14 @@
           <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="fees"> Fees &amp; Payments</label>
           <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="attendance"> Attendance</label>
           <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="exams"> Exams &amp; Marks</label>
-          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="transport_library"> Transport, Library &amp; Other Extras</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="accounting"> Accounting</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="staff_payroll"> Staff &amp; Payroll</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="inventory"> Inventory</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="hostel"> Hostel</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="transport"> Transport</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="library"> Library</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="timetable_homework"> Timetable &amp; Homework</label>
+          <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:0.86rem;"><input type="checkbox" class="plan-module-cb" value="communications"> Communications</label>
         </div>
         <div style="font-size:0.76rem; color:var(--ink-soft); margin-top:4px;">For an "All Modules" plan every module is included automatically. Only pick individual modules here for "Selected Modules".</div>
       </div>
@@ -698,6 +706,18 @@
         <div class="field">
           <label for="fContactWhatsapp">WhatsApp Number</label>
           <input type="tel" id="fContactWhatsapp" placeholder="e.g. 9701424177">
+        </div>
+        <div class="field">
+          <label for="fCompanyName">Name on invoices</label>
+          <input type="text" id="fCompanyName" placeholder="e.g. SVM EdTech">
+        </div>
+        <div class="field">
+          <label for="fCompanyAddress">Address on invoices</label>
+          <input type="text" id="fCompanyAddress" placeholder="e.g. Andhra Pradesh, India">
+        </div>
+        <div class="field">
+          <label for="fPaymentDetails">How to pay (shown on invoices)</label>
+          <textarea id="fPaymentDetails" rows="3" placeholder="UPI ID, bank name, account name, account number, IFSC"></textarea>
         </div>
       </div>
       <div class="field" style="margin-top:16px;">
@@ -1182,6 +1202,9 @@ async function openAccountModal() {
     $('#fContactEmail').value = settingsCache.contactEmail || '';
     $('#fContactPhone').value = settingsCache.contactPhone || '';
     $('#fContactWhatsapp').value = settingsCache.contactWhatsapp || '';
+    $('#fCompanyName').value = settingsCache.companyName || '';
+    $('#fCompanyAddress').value = settingsCache.companyAddress || '';
+    $('#fPaymentDetails').value = settingsCache.paymentDetails || '';
     $('#fPriceAllModules').value = settingsCache.defaultPriceErpAllModules != null ? settingsCache.defaultPriceErpAllModules : '';
     $('#fPriceAllModulesWebsite').value = settingsCache.defaultPriceErpAllModulesWebsite != null ? settingsCache.defaultPriceErpAllModulesWebsite : '';
   } catch (err) {
@@ -1244,6 +1267,9 @@ $('#settingsForm').addEventListener('submit', async (e) => {
         contactEmail: $('#fContactEmail').value,
         contactPhone: $('#fContactPhone').value,
         contactWhatsapp: $('#fContactWhatsapp').value,
+        companyName: $('#fCompanyName').value,
+        companyAddress: $('#fCompanyAddress').value,
+        paymentDetails: $('#fPaymentDetails').value,
         defaultPriceErpAllModules: $('#fPriceAllModules').value,
         defaultPriceErpAllModulesWebsite: $('#fPriceAllModulesWebsite').value,
       },
@@ -1707,13 +1733,14 @@ const PLAN_TYPE_LABELS = {
   erp_all_modules_website: 'ERP — All Modules + Website',
 };
 const PLAN_MODULE_LABELS = {
-  fees: 'Fees & Payments', attendance: 'Attendance', exams: 'Exams & Marks', transport_library: 'Transport, Library & Other Extras',
+  fees: 'Fees & Payments', attendance: 'Attendance', exams: 'Exams & Marks', accounting: 'Accounting', staff_payroll: 'Staff & Payroll', inventory: 'Inventory', hostel: 'Hostel', transport: 'Transport', library: 'Library', timetable_homework: 'Timetable & Homework', communications: 'Communications', transport_library: 'Transport + Library',
 };
 function getSelectedPlanModules() {
   return Array.from(document.querySelectorAll('.plan-module-cb:checked')).map(cb => cb.value);
 }
 function setPlanModules(keys) {
-  document.querySelectorAll('.plan-module-cb').forEach(cb => { cb.checked = (keys || []).includes(cb.value); });
+  const ks = new Set(keys || []); if (ks.has('transport_library')) { ks.add('transport'); ks.add('library'); }
+  document.querySelectorAll('.plan-module-cb').forEach(cb => { cb.checked = ks.has(cb.value); });
 }
 // "All Modules" plans always include everything — lock the checkboxes on
 // (rather than hiding them) so it's visually obvious nothing was left out.
@@ -2102,6 +2129,39 @@ function filteredInvoices() {
   return invoicesCache.filter(i => (!schoolId || i.schoolId === schoolId) && (!status || i.effectiveStatus === status));
 }
 
+
+// Printable invoice (opens a clean page; use the browser's Print / Save as PDF).
+function printInvoice(id) {
+  const inv = (invoicesCache || []).find(x => String(x.id) === String(id));
+  if (!inv) return;
+  const sc = (schoolsCache || []).find(s => String(s.id) === String(inv.schoolId)) || {};
+  const s = settingsCache || {};
+  const money = v => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dt = v => v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+  const nl = v => esc(v || '').replace(/\n/g, '<br>');
+  const total = inv.totalAmount != null ? inv.totalAmount : inv.amount;
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to print the invoice.'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${esc(inv.invoiceNumber || '')}</title>
+<style>body{font:14px/1.5 Inter,Arial,sans-serif;color:#14182B;margin:0;padding:32px;max-width:760px;margin:auto}
+h1{font:700 26px Georgia,serif;color:#1F2A6B;margin:0}.top{display:flex;justify-content:space-between;border-bottom:3px solid #A85F0B;padding-bottom:14px;margin-bottom:20px}
+.muted{color:#5A5F77;font-size:12px}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px 8px;border-bottom:1px solid #D9D3C4;text-align:left}th{background:#E8EAF6;font-size:12px;text-transform:uppercase}
+.r{text-align:right}.tot td{font-weight:700;border-top:2px solid #1F2A6B}.box{background:#FBF8F2;border:1px solid #D9D3C4;border-radius:8px;padding:12px 14px;margin-top:16px}
+.bar{margin-bottom:16px}@media print{.bar{display:none}body{padding:0}}</style></head><body>
+<div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>
+<div class="top"><div><h1>${esc(s.companyName || 'SVM EdTech')}</h1><div class="muted">${nl(s.companyAddress || 'Andhra Pradesh, India')}<br>${esc(s.contactEmail || '')} ${esc(s.contactPhone || '')}</div></div>
+<div class="r"><h1 style="font-size:20px">INVOICE</h1><div class="muted">No: <b>${esc(inv.invoiceNumber || '-')}</b><br>Date: ${dt(inv.createdAt)}<br>Due: ${dt(inv.dueDate)}<br>Status: ${esc(titleCase(inv.effectiveStatus || inv.status))}</div></div></div>
+<div><div class="muted">Billed to</div><b>${esc(sc.name || schoolName(inv.schoolId))}</b>${inv.gstin ? `<br><span class="muted">GSTIN: ${esc(inv.gstin)}</span>` : ''}</div>
+<table><thead><tr><th>Description</th><th class="r">Amount</th></tr></thead><tbody>
+<tr><td>${esc(inv.description || 'School ERP service')}${inv.billingPeriod ? `<div class="muted">Period: ${esc(inv.billingPeriod)}</div>` : ''}</td><td class="r">${money(inv.amount)}</td></tr>
+${inv.gstApplicable ? `<tr><td>GST @ ${esc(inv.gstRate)}%</td><td class="r">${money(inv.gstAmount)}</td></tr>` : ''}
+<tr class="tot"><td>Total</td><td class="r">${money(total)}</td></tr></tbody></table>
+${s.paymentDetails ? `<div class="box"><b>How to pay</b><br>${nl(s.paymentDetails)}</div>` : ''}
+${inv.notes ? `<div class="muted" style="margin-top:12px">${nl(inv.notes)}</div>` : ''}
+<p class="muted" style="margin-top:28px">Thank you for choosing ${esc(s.companyName || 'SVM EdTech')}. This is a computer-generated invoice.</p></body></html>`);
+  w.document.close();
+}
+
 function renderInvoicesTable() {
   const wrap = $('#invoicesTableWrap');
   const rows = filteredInvoices();
@@ -2124,6 +2184,7 @@ function renderInvoicesTable() {
             <td>
               <div class="row-actions">
                 ${i.status === 'pending' ? `<button class="btn btn-light btn-sm" data-action="mark-paid" data-id="${i.id}">Mark Paid</button>` : ''}
+                <button class="btn btn-light btn-sm" data-action="print-invoice" data-id="${i.id}">Print</button>
                 <button class="btn btn-light btn-sm" data-action="edit-invoice" data-id="${i.id}">Edit</button>
               </div>
             </td>
@@ -2132,6 +2193,7 @@ function renderInvoicesTable() {
       </tbody>
     </table>
   `;
+  wrap.querySelectorAll('[data-action="print-invoice"]').forEach(btn => btn.addEventListener('click', () => printInvoice(btn.dataset.id)));
   wrap.querySelectorAll('[data-action="edit-invoice"]').forEach(btn => btn.addEventListener('click', () => openEditInvoiceModal(btn.dataset.id)));
   wrap.querySelectorAll('[data-action="mark-paid"]').forEach(btn => btn.addEventListener('click', () => markInvoicePaid(btn.dataset.id)));
 }

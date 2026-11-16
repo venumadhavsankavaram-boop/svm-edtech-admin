@@ -433,6 +433,10 @@ async function ensureSchema() {
   // priced by hand each time, same as before this feature existed.
   await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS default_price_erp_all_modules NUMERIC(12,2)`;
   await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS default_price_erp_all_modules_website NUMERIC(12,2)`;
+  // Printed on every invoice: who is billing, and how to pay.
+  await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS company_name TEXT`;
+  await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS company_address TEXT`;
+  await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS payment_details TEXT`;
 }
 
 // A school's plan — what it's actually entitled to — as distinct from its
@@ -442,7 +446,7 @@ async function ensureSchema() {
 // auto-fill — that happens client-side so the vendor sees it before saving
 // and can still hand-edit it for a custom deal).
 const PLAN_TYPES = ['erp_selected_modules', 'erp_all_modules', 'erp_all_modules_website'];
-const PLAN_MODULE_KEYS = ['fees', 'attendance', 'exams', 'transport_library'];
+const PLAN_MODULE_KEYS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications', 'transport_library'];
 await ensureSchema();
 
 async function seedDefaultAdminIfEmpty() {
@@ -702,6 +706,9 @@ function shapeSettings(row) {
     contactWhatsapp: row ? row.contact_whatsapp : null,
     defaultPriceErpAllModules: row && row.default_price_erp_all_modules != null ? Number(row.default_price_erp_all_modules) : null,
     defaultPriceErpAllModulesWebsite: row && row.default_price_erp_all_modules_website != null ? Number(row.default_price_erp_all_modules_website) : null,
+    companyName: row ? row.company_name : null,
+    companyAddress: row ? row.company_address : null,
+    paymentDetails: row ? row.payment_details : null,
     updatedAt: row ? row.updated_at : null,
   };
 }
@@ -718,7 +725,7 @@ app.get('/api/settings', async (req, res) => {
 
 app.put('/api/settings', async (req, res) => {
   try {
-    const { contactEmail, contactPhone, contactWhatsapp, defaultPriceErpAllModules, defaultPriceErpAllModulesWebsite } = req.body || {};
+    const { contactEmail, contactPhone, contactWhatsapp, defaultPriceErpAllModules, defaultPriceErpAllModulesWebsite, companyName, companyAddress, paymentDetails } = req.body || {};
     const priceAll = defaultPriceErpAllModules != null && defaultPriceErpAllModules !== '' ? Number(defaultPriceErpAllModules) : null;
     const priceAllWebsite = defaultPriceErpAllModulesWebsite != null && defaultPriceErpAllModulesWebsite !== '' ? Number(defaultPriceErpAllModulesWebsite) : null;
     await sql`
@@ -730,6 +737,9 @@ app.put('/api/settings', async (req, res) => {
         contact_whatsapp = ${contactWhatsapp || null},
         default_price_erp_all_modules = ${priceAll},
         default_price_erp_all_modules_website = ${priceAllWebsite},
+        company_name = ${companyName || null},
+        company_address = ${companyAddress || null},
+        payment_details = ${paymentDetails || null},
         updated_at = now()
     `;
     const rows = await sql`SELECT * FROM vendor_settings WHERE id = 'default'`;
