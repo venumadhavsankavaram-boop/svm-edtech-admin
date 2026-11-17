@@ -983,12 +983,12 @@ async function api(path, opts = {}) {
 }
 
 let toastTimer = null;
-function showToast(msg) {
+function showToast(msg, ms) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2400);
 }
 
 function esc(s) {
@@ -3007,13 +3007,17 @@ async function generateRenewal(schoolId) {
   const s = schoolsCache.find(x => x.id === schoolId); if (!s) return;
   try {
     const pv = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId, includeSetup: false } });
+    if (!(s.billingAmount > 0)) {
+      if (pv.missing.includes('plan')) { showToast(s.name + " has no plan yet. Press Edit on the school and choose its Plan (or enter a Billing Amount), then try again.", 7000); return; }
+      if (pv.missing.length) { showToast('Set these prices first in Pricing & GST: ' + pv.missing.join(', ') + '.', 7000); return; }
+    }
     const amt = s.billingAmount > 0 ? s.billingAmount : pv.totals.total;
     if (!confirm('Generate the yearly renewal invoice for ' + s.name + '?\n\nAbout ' + money2(amt) + (s.planValidUntil ? '\nCurrent plan runs to ' + dfmt(s.planValidUntil) : '') + '\n(It is made from the school\'s agreed amount, or from the price list.)')) return;
     const inv = await api('/api/schools/' + schoolId + '/renewal-invoice', { method: 'POST', body: {} });
     showToast('Renewal invoice ' + inv.invoiceNumber + ' created for ' + money2(inv.totalAmount) + '.');
     await refreshBilling();
     document.querySelector('[data-tab="billing"]').click();
-  } catch (e) { showToast(e.message); }
+  } catch (e) { showToast(e.message, 7000); }
 }
 function fillRenewSelect() {
   const sel = $('#renewSchoolSel'); if (!sel) return;
