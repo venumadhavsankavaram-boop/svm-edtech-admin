@@ -482,6 +482,12 @@ async function ensureSchema() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_vendor_payments_invoice ON vendor_payments (invoice_id)`;
   // Invoices marked paid before receipts existed get one payment each, so every rupee has a receipt.
+  // Invoices made before numbering existed get the next numbers (oldest first) so every bill has a unique number.
+  const unnumbered = await sql`SELECT id, created_at FROM vendor_invoices WHERE invoice_number IS NULL ORDER BY created_at`;
+  for (const r of unnumbered) {
+    const n = Number((await sql`SELECT nextval('vendor_invoice_seq') AS n`)[0].n);
+    await sql`UPDATE vendor_invoices SET invoice_number = ${'SVM-' + new Date(r.created_at).getFullYear() + '-' + String(n).padStart(4, '0')} WHERE id = ${r.id}`;
+  }
   const legacyPaid = await sql`
     SELECT i.id, i.school_id, COALESCE(i.total_amount, i.amount) AS total, i.paid_at FROM vendor_invoices i
     WHERE i.status = 'paid' AND NOT EXISTS (SELECT 1 FROM vendor_payments p WHERE p.invoice_id = i.id)`;
@@ -1515,7 +1521,7 @@ app.post('/api/schools/:id/renewal-invoice', async (req, res) => {
     } else {
       if (!school.plan_type) return res.status(400).json({ error: "Set this school's plan (or its billing amount) first." });
       const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false });
-      if (p.missing.length) return res.status(400).json({ error: 'Set these prices in Pricing & GST first: ' + p.missing.join(', ') + '.' });
+      if (p.missing.length) return res.status(400).json({ error: 'Set these prices in Billing setup first: ' + p.missing.join(', ') + '.' });
       lines = p.lines;
     }
     const b = req.body || {};

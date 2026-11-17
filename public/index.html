@@ -343,12 +343,13 @@
 
     <!-- ===================== Billing ===================== -->
     <div class="tab-panel" id="tab-billing">
+      <div id="billSetupHint" style="display:none; background:#FFF3E0; border:1.5px solid #E8C874; color:#7a5a12; padding:12px 16px; border-radius:12px; margin-bottom:16px; font-size:0.85rem;"></div>
       <div class="cards" id="billingCards" style="grid-template-columns:repeat(4, 1fr);"></div>
       <div class="panel">
         <div class="panel-head">
           <h2>Invoices</h2>
           <div style="display:flex; gap:8px;">
-            <button class="btn btn-light" id="btnPricing">Pricing &amp; GST</button>
+            <button class="btn btn-light" id="btnPricing">Billing setup</button>
             <button class="btn btn-light" id="btnGenerateInvoices">Generate Invoices</button>
             <button class="btn btn-accent" id="btnAddInvoice">+ Add Invoice</button>
           </div>
@@ -382,7 +383,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Quotations</h2>
-          <div style="display:flex; gap:8px;"><button class="btn btn-light" id="btnPricingQ" onclick="document.getElementById('btnPricing').click()">Pricing &amp; GST</button><button class="btn btn-accent" id="btnAddQuote">+ New Quotation</button></div>
+          <div style="display:flex; gap:8px;"><button class="btn btn-light" id="btnPricingQ" onclick="document.getElementById('btnPricing').click()">Billing setup</button><button class="btn btn-accent" id="btnAddQuote">+ New Quotation</button></div>
         </div>
         <div id="quotesTableWrap"></div>
       </div>
@@ -1105,7 +1106,7 @@ async function loadAll() {
   renderLeadsTable();
   updateSupportCountPill(summary.openQueries);
   updateLeadsCountPill(summary.newLeads);
-  try { [quotesCache, paymentsCache] = await Promise.all([api('/api/quotes'), api('/api/payments')]); renderQuotesTable(); renderReceiptsTable(); renderInvoicesTable(); fillRenewSelect(); } catch (e) {}
+  try { [quotesCache, paymentsCache] = await Promise.all([api('/api/quotes'), api('/api/payments')]); renderQuotesTable(); renderReceiptsTable(); renderInvoicesTable(); fillRenewSelect(); renderSetupHint(); } catch (e) {}
 }
 
 function populateSchoolSelects() {
@@ -2514,26 +2515,49 @@ async function refreshBilling() {
   renderQuotesTable();
   renderReceiptsTable();
   fillRenewSelect();
+  renderSetupHint();
 }
 
 /* ---- printable documents ---- */
-function docShell(title, kindLabel, metaHtml, bodyHtml) {
+function docShell(title, kindLabel, metaHtml, bodyHtml, stamp) {
   const s = settingsCache || {}, c = cfgNow();
-  const ids = [c.gstEnabled && c.gstin ? 'GSTIN: ' + esc(c.gstin) : '', c.pan ? 'PAN: ' + esc(c.pan) : ''].filter(Boolean).join(' &nbsp; ');
+  const theme = kindLabel === 'PAYMENT RECEIPT' ? ['#0E6B52', '#21A57F', '#E6F6F0'] : kindLabel === 'QUOTATION' ? ['#55267F', '#8B4FC0', '#F2EAFA'] : ['#1F2A6B', '#3F51C7', '#E8EAF6'];
+  const ids = [c.gstEnabled && c.gstin ? 'GSTIN: ' + esc(c.gstin) : '', c.pan ? 'PAN: ' + esc(c.pan) : ''].filter(Boolean).join(' &nbsp;·&nbsp; ');
   const nl = v => esc(v || '').replace(/\n/g, '<br>');
+  const stampHtml = stamp ? `<div class="stampwrap"><div class="stamp ${stamp.cls}">${esc(stamp.text)}</div></div>` : '';
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-<style>body{font:14px/1.5 Inter,Arial,sans-serif;color:#14182B;margin:0;padding:32px;max-width:780px;margin:auto}
-h1{font:700 26px Georgia,serif;color:#1F2A6B;margin:0}.top{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #A85F0B;padding-bottom:14px;margin-bottom:20px}
-.muted{color:#5A5F77;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{padding:8px;border-bottom:1px solid #D9D3C4;text-align:left;vertical-align:top}th{background:#E8EAF6;font-size:12px;text-transform:uppercase}
-.r{text-align:right}.tot td{font-weight:700;border-top:2px solid #1F2A6B}.box{background:#FBF8F2;border:1px solid #D9D3C4;border-radius:8px;padding:12px 14px;margin-top:14px}
-.big{font:700 22px Georgia,serif;color:#1F2A6B}.sig{margin-top:50px;text-align:right}.sig div{display:inline-block;border-top:1px solid #14182B;padding-top:4px;min-width:180px;text-align:center}
-.bar{margin-bottom:16px}.stamp{display:inline-block;border:2px solid #1b8a5a;color:#1b8a5a;font-weight:700;padding:2px 12px;border-radius:6px;letter-spacing:1px}
-@media print{.bar{display:none}body{padding:0}}</style></head><body>
+<style>
+*{box-sizing:border-box}body{font:14px/1.55 Inter,Arial,sans-serif;color:#1c2033;margin:0;background:#EEF0F7}
+.page{max-width:800px;margin:18px auto;background:#fff;box-shadow:0 6px 28px rgba(31,42,107,.18);position:relative;overflow:hidden;border-radius:6px}
+.head{background:linear-gradient(120deg,${theme[0]},${theme[1]});color:#fff;padding:26px 34px 22px;display:flex;justify-content:space-between;gap:20px;align-items:flex-start}
+.brand{display:flex;gap:14px;align-items:center}.brand img{width:54px;height:54px}
+.brand h1{margin:0;font:700 25px Georgia,serif;letter-spacing:.2px}.brand .sub{font-size:12px;opacity:.9;line-height:1.5;margin-top:2px}
+.title{text-align:right}.title .kind{font:700 22px Georgia,serif;letter-spacing:2px}.title .num{display:inline-block;margin-top:8px;background:#fff;color:${theme[0]};font-weight:700;padding:5px 14px;border-radius:20px;font-size:14px;letter-spacing:.5px}
+.gold{height:5px;background:linear-gradient(90deg,#E0A526,#F3C95E,#E0A526)}
+.body{padding:24px 34px 8px}
+.cards{display:flex;gap:16px;margin-bottom:6px}.card{flex:1;background:${theme[2]};border-left:5px solid ${theme[1]};border-radius:8px;padding:12px 16px}
+.card .lbl{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:${theme[0]};font-weight:700;margin-bottom:3px}
+.muted{color:#5A5F77;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}
+th{background:${theme[0]};color:#fff;font-size:11.5px;text-transform:uppercase;letter-spacing:.8px;padding:10px 10px;text-align:left}
+td{padding:10px;border-bottom:1px solid #E3E5EF;vertical-align:top}tbody tr:nth-child(even) td{background:#FAFAFD}
+.r{text-align:right}th.r{text-align:right}.tot td{font-weight:700;font-size:15px;background:${theme[2]} !important;color:${theme[0]};border-top:2px solid ${theme[0]}}
+.box{background:#FFFBEF;border:1px dashed #E0A526;border-radius:8px;padding:12px 16px;margin-top:14px}
+.big{font:700 28px Georgia,serif;color:${theme[0]}}.sig{margin-top:46px;text-align:right}.sig div{display:inline-block;border-top:1px solid #1c2033;padding-top:4px;min-width:190px;text-align:center;font-size:12px;color:#5A5F77}
+.foot{background:${theme[0]};color:#fff;text-align:center;font-size:12px;padding:12px;margin-top:20px;opacity:.97}
+.stampwrap{text-align:right;padding:16px 34px 0;margin-bottom:-6px}.stampwrap .stamp{display:inline-block;transform:rotate(-5deg)}
+.stamp{border:3px solid;border-radius:8px;padding:2px 16px;font:800 24px Arial,sans-serif;letter-spacing:3px;opacity:.78}
+.stamp.paid{color:#13955F;border-color:#13955F}.stamp.part{color:#C27A0A;border-color:#C27A0A}.stamp.due{color:#2B3A9E;border-color:#2B3A9E}.stamp.over{color:#C62848;border-color:#C62848}.stamp.void{color:#7b7f92;border-color:#7b7f92}
+.bar{max-width:800px;margin:14px auto 0;text-align:right}.bar button{background:${theme[0]};color:#fff;border:0;padding:9px 18px;border-radius:8px;font-size:13px;cursor:pointer}
+@media print{body{background:#fff}.bar{display:none}.page{margin:0;box-shadow:none;border-radius:0}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
 <div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>
-<div class="top"><div><h1>${esc(s.companyName || 'SVM EdTech')}</h1><div class="muted">${nl(s.companyAddress || 'Andhra Pradesh, India')}<br>${esc(s.contactEmail || '')} ${esc(s.contactPhone || '')}${ids ? '<br>' + ids : ''}</div></div>
-<div class="r"><h1 style="font-size:20px">${kindLabel}</h1><div class="muted">${metaHtml}</div></div></div>
-${bodyHtml}
-<p class="muted" style="margin-top:28px">Thank you for choosing ${esc(s.companyName || 'SVM EdTech')}. This is a computer-generated document.</p></body></html>`;
+<div class="page">
+<div class="head"><div class="brand"><img src="${location.origin}/svm-logo-mark-white.svg" alt=""><div><h1>${esc(s.companyName || 'SVM EdTech')}</h1><div class="sub">${nl(s.companyAddress || 'Andhra Pradesh, India')}<br>${esc(s.contactEmail || '')} ${s.contactPhone ? '· ' + esc(s.contactPhone) : ''}${ids ? '<br>' + ids : ''}</div></div></div>
+<div class="title"><div class="kind">${kindLabel}</div>${metaHtml}</div></div>
+<div class="gold"></div>${stampHtml}
+<div class="body">${bodyHtml}</div>
+<div class="foot">Thank you for choosing ${esc(s.companyName || 'SVM EdTech')} · This is a computer-generated document</div>
+</div></body></html>`;
 }
 function openDoc(html) {
   const w = window.open('', '_blank');
@@ -2550,7 +2574,7 @@ ${d.gstApplicable ? `<tr><td colspan="4" class="r">GST @ ${esc(d.gstRate)}% (CGS
 <tr class="tot"><td colspan="4" class="r">Total</td><td class="r">${money2(d.totalAmount)}</td></tr></tbody></table>`;
 }
 function billedToHtml(name, addr, gstin, extra) {
-  return `<div><div class="muted">Billed to</div><b>${esc(name)}</b>${addr ? `<br><span class="muted">${esc(addr).replace(/\n/g, '<br>')}</span>` : ''}${gstin ? `<br><span class="muted">GSTIN: ${esc(gstin)}</span>` : ''}${extra || ''}</div>`;
+  return `<div class="cards"><div class="card"><div class="lbl">Billed to</div><b style="font-size:15px">${esc(name)}</b>${addr ? `<br><span class="muted">${esc(addr).replace(/\n/g, '<br>')}</span>` : ''}${gstin ? `<br><span class="muted">GSTIN: ${esc(gstin)}</span>` : ''}</div>${extra ? `<div class="card"><div class="lbl">Details</div>${extra}</div>` : ''}</div>`;
 }
 
 function printInvoice(id) {
@@ -2560,7 +2584,8 @@ function printInvoice(id) {
   const c = cfgNow();
   const pays = (paymentsCache || []).filter(p => p.invoiceId === inv.id);
   const taxLabel = inv.gstApplicable ? 'TAX INVOICE' : 'INVOICE';
-  const meta = `No: <b>${esc(inv.invoiceNumber || '-')}</b><br>Date: ${dfmt(inv.createdAt)}<br>Due: ${dfmt(inv.dueDate)}<br>Status: ${esc(titleCase(inv.effectiveStatus || inv.status))}`;
+  const meta = `<div class="num">${esc(inv.invoiceNumber || '-')}</div><div style="font-size:12px;margin-top:8px;opacity:.95">Date: ${dfmt(inv.createdAt)}<br>Due: ${dfmt(inv.dueDate)}</div>`;
+  const stamp = { paid: { text: 'PAID', cls: 'paid' }, partial: { text: 'PART PAID', cls: 'part' }, overdue: { text: 'OVERDUE', cls: 'over' }, pending: { text: 'DUE', cls: 'due' }, cancelled: { text: 'CANCELLED', cls: 'void' } }[inv.effectiveStatus || inv.status];
   const term = inv.termStart && inv.termEnd ? `<div class="muted">Service period: ${dfmt(inv.termStart)} to ${dfmt(inv.termEnd)}</div>` : '';
   const body = `${billedToHtml(sc.name || schoolName(inv.schoolId), sc.billingAddress, inv.gstin || sc.schoolGstin, term)}
 ${linesTableHtml(inv.lines, inv)}
@@ -2572,7 +2597,7 @@ ${settingsCache.paymentDetails ? `<div class="box"><b>How to pay</b><br>${esc(se
 ${inv.notes ? `<div class="muted" style="margin-top:12px">${esc(inv.notes).replace(/\n/g, '<br>')}</div>` : ''}
 ${c.terms ? `<div class="muted" style="margin-top:12px"><b>Terms</b><br>${esc(c.terms).replace(/\n/g, '<br>')}</div>` : ''}
 <div class="sig"><div>Authorised signatory</div></div>`;
-  openDoc(docShell('Invoice ' + (inv.invoiceNumber || ''), taxLabel, meta, body));
+  openDoc(docShell('Invoice ' + (inv.invoiceNumber || ''), taxLabel, meta, body, stamp));
 }
 
 function printReceipt(paymentId) {
@@ -2582,7 +2607,7 @@ function printReceipt(paymentId) {
   const sc = (schoolsCache || []).find(s => s.id === p.schoolId) || {};
   const paidTill = (paymentsCache || []).filter(x => x.invoiceId === p.invoiceId && (x.paidOn < p.paidOn || (x.paidOn === p.paidOn && x.createdAt <= p.createdAt))).reduce((s, x) => s + x.amount, 0);
   const balAfter = r2c((inv.totalAmount || 0) - paidTill);
-  const meta = `No: <b>${esc(p.receiptNumber)}</b><br>Date: ${dfmt(p.paidOn)}`;
+  const meta = `<div class="num">${esc(p.receiptNumber)}</div><div style="font-size:12px;margin-top:8px;opacity:.95">Date: ${dfmt(p.paidOn)}</div>`;
   const body = `${billedToHtml(sc.name || schoolName(p.schoolId), sc.billingAddress, sc.schoolGstin).replace('Billed to', 'Received from')}
 <div class="box" style="margin-top:18px"><div class="muted">Amount received</div><div class="big">${money2(p.amount)}</div><div class="muted">${esc(p.amountWords || '')}</div></div>
 <table><tbody>
@@ -2591,17 +2616,16 @@ function printReceipt(paymentId) {
 <tr><td>Invoice total</td><td class="r">${money2(inv.totalAmount)}</td></tr>
 <tr><td>Paid up to this receipt</td><td class="r">${money2(paidTill)}</td></tr>
 <tr class="tot"><td>Balance due after this receipt</td><td class="r">${money2(balAfter)}</td></tr></tbody></table>
-${balAfter <= 0.005 ? '<div><span class="stamp">PAID IN FULL</span></div>' : ''}
 ${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}
 <div class="sig"><div>Authorised signatory</div></div>`;
-  openDoc(docShell('Receipt ' + p.receiptNumber, 'PAYMENT RECEIPT', meta, body));
+  openDoc(docShell('Receipt ' + p.receiptNumber, 'PAYMENT RECEIPT', meta, body, balAfter <= 0.005 ? { text: 'PAID IN FULL', cls: 'paid' } : { text: 'RECEIVED', cls: 'part' }));
 }
 
 function printQuote(id) {
   const q = (quotesCache || []).find(x => x.id === id);
   if (!q) return;
   const c = cfgNow();
-  const meta = `No: <b>${esc(q.quoteNumber)}</b><br>Date: ${dfmt(q.createdAt)}<br>Valid until: ${dfmt(q.validUntil)}`;
+  const meta = `<div class="num">${esc(q.quoteNumber)}</div><div style="font-size:12px;margin-top:8px;opacity:.95">Date: ${dfmt(q.createdAt)}<br>Valid until: ${dfmt(q.validUntil)}</div>`;
   const contact = [q.partyContact, q.partyPhone, q.partyEmail].filter(Boolean).map(esc).join(' · ');
   const body = `${billedToHtml(q.partyName, q.partyAddress, null, contact ? `<br><span class="muted">${contact}</span>` : '').replace('Billed to', 'Quotation for')}
 ${linesTableHtml(q.lines, { ...q, amount: q.subtotal })}
@@ -2671,6 +2695,44 @@ function renderReceiptsTable() {
   wrap.querySelectorAll('[data-rc]').forEach(b => b.addEventListener('click', () => printReceipt(b.dataset.rc)));
 }
 
+
+/* ---- "Pick an item" dropdown: every billable piece with its price ---- */
+function itemChoices(schoolId) {
+  const c = cfgNow(), s = settingsCache || {}, sc = (schoolsCache || []).find(x => x.id === schoolId) || {};
+  const pr = v => (v == null || v === '' ? 'price not set' : fmtMoney(v));
+  const out = [];
+  out.push({ g: 'One-time setup (when a school joins)', items: [
+    ['setup:erp_selected_modules', 'Setup: selected modules', c.setupFees.erp_selected_modules, 'setup'],
+    ['setup:erp_all_modules', 'Setup: all modules', c.setupFees.erp_all_modules, 'setup'],
+    ['setup:erp_all_modules_website', 'Setup: all modules + website', c.setupFees.erp_all_modules_website, 'setup'],
+  ] });
+  out.push({ g: 'Yearly packages', items: [
+    ['pkg:all', 'Yearly: all modules', s.defaultPriceErpAllModules, 'subscription'],
+    ['pkg:allw', 'Yearly: all modules + school website', s.defaultPriceErpAllModulesWebsite, 'subscription'],
+  ] });
+  out.push({ g: 'Yearly, per module', items: PRICE_MODS.map(m => ['mod:' + m, (PLAN_MODULE_LABELS[m] || m) + ', yearly', c.moduleYearly[m], 'subscription']) });
+  out.push({ g: 'Other', items: [
+    ['agreed', 'Yearly hosting and annual maintenance (this school\'s agreed amount)', sc.billingAmount > 0 ? sc.billingAmount : null, 'subscription'],
+    ['custom', 'Something else (type your own item and price)', 0, 'other'],
+  ] });
+  return out;
+}
+function itemPickerHtml(id) { return `<select id="${id}" style="width:100%; padding:9px 11px; border:1.5px solid var(--border); border-radius:8px; font-size:0.85rem;"><option value="">+ Add an item from the list…</option></select>`; }
+function fillItemPicker(selId, schoolId) {
+  const el = document.getElementById(selId); if (!el) return;
+  const pr = v => (v == null || v === '' ? 'price not set' : fmtMoney(v));
+  el.innerHTML = '<option value="">+ Add an item from the list…</option>' + itemChoices(schoolId).map(g => `<optgroup label="${esc(g.g)}">${g.items.map(i => `<option value="${esc(i[0])}">${esc(i[1])}${i[0] === 'custom' ? '' : ' — ' + pr(i[2])}</option>`).join('')}</optgroup>`).join('');
+}
+function pickItem(selId, schoolId, editor, hintEl) {
+  const el = document.getElementById(selId), val = el.value; if (!val) return;
+  const it = itemChoices(schoolId).flatMap(g => g.items).find(i => i[0] === val);
+  el.value = '';
+  if (!it) return;
+  const price = Number(it[2]) || 0;
+  if (hintEl) { hintEl.style.color = ''; hintEl.textContent = it[2] == null && val !== 'custom' ? 'That price is not set yet. Type it in the Rate box below, or save it once in Billing setup.' : ''; }
+  editor.add({ kind: it[3], module: val.startsWith('mod:') ? val.slice(4) : undefined, description: val === 'custom' ? '' : (val === 'agreed' ? 'Yearly hosting charges and annual maintenance' : it[1].replace(/^Setup: /, 'One-time setup: ').replace(/^Yearly: /, 'Yearly subscription: ')), qty: 1, rate: price });
+}
+
 /* ---- Invoice modal (with items) ---- */
 makeModal('invModalOv', `
   <h3 id="invM_title">Add Invoice</h3>
@@ -2680,11 +2742,15 @@ makeModal('invModalOv', `
     <div class="field"><label>Due date</label><input type="date" id="invM_due"></div>
   </div>
   <div class="field"><label>Description</label><input type="text" id="invM_desc" placeholder="e.g. Yearly renewal 2027-28"></div>
+  <div class="field"><label>What is this bill for? Tap one and it fills in for you</label>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button type="button" class="btn btn-accent btn-sm" data-qs="renewal">Yearly renewal</button>
+      <button type="button" class="btn btn-accent btn-sm" data-qs="new">New school: setup + first year</button>
+      <button type="button" class="btn btn-accent btn-sm" data-qs="agreed">Agreed amount (hosting &amp; maintenance)</button>
+    </div>
+    <div class="modal-sub" id="invM_hint" style="margin:6px 0 0;"></div></div>
   <div id="invM_lines"></div>
-  <div style="display:flex; gap:8px; margin:8px 0 14px; flex-wrap:wrap;">
-    <button type="button" class="btn btn-light btn-sm" id="invM_add">+ Add item</button>
-    <button type="button" class="btn btn-light btn-sm" id="invM_fill">Fill from price list</button>
-  </div>
+  <div class="field" style="margin:10px 0 14px;"><select id="invM_pick" style="width:100%; padding:9px 11px; border:1.5px solid var(--border); border-radius:8px; font-size:0.85rem;"></select></div>
   <div class="grid-2">
     <div class="field"><label>Discount (₹)</label><input type="number" id="invM_disc" min="0" step="0.01" value="0"></div>
     <div class="field"><label>Service period (yearly items)</label><div style="display:flex; gap:6px;"><input type="date" id="invM_ts"><input type="date" id="invM_te"></div></div>
@@ -2722,25 +2788,39 @@ function openInvoiceModal(inv) {
   $('#invM_rate').value = inv ? (inv.gstRate != null ? inv.gstRate : c.gstRate) : c.gstRate;
   $('#invM_gstin').value = inv ? inv.gstin || '' : '';
   $('#invM_notes').value = inv ? inv.notes || '' : '';
+  fillItemPicker('invM_pick', $('#invM_school').value);
   invEditor.set(inv ? (inv.lines && inv.lines.length ? inv.lines : [{ kind: 'other', description: inv.description || 'School ERP service', qty: 1, rate: inv.subtotal != null ? inv.subtotal : inv.amount }]) : []);
   $('#invM_del').style.display = inv ? 'inline-block' : 'none';
   $('#invM_cancelInv').style.display = inv && inv.status !== 'cancelled' ? 'inline-block' : 'none';
-  $('#invM_err').style.display = 'none';
+  $('#invM_err').style.display = 'none'; $('#invM_hint').textContent = '';
   invTotals();
   openM('invModalOv');
 }
 function openEditInvoiceModal(id) { const i = invoicesCache.find(x => x.id === id); if (i) openInvoiceModal(i); }
 $('#btnAddInvoice').addEventListener('click', () => openInvoiceModal(null));
 $('#invM_close').addEventListener('click', () => closeM('invModalOv'));
-$('#invM_add').addEventListener('click', () => invEditor.add({ kind: 'other', description: '', qty: 1, rate: 0 }));
-$('#invM_fill').addEventListener('click', async () => {
+$('#invM_pick').addEventListener('change', () => pickItem('invM_pick', $('#invM_school').value, invEditor, $('#invM_hint')));
+$('#invM_school').addEventListener('change', () => fillItemPicker('invM_pick', $('#invM_school').value));
+document.querySelectorAll('[data-qs]').forEach(btn => btn.addEventListener('click', async () => {
+  const hint = $('#invM_hint'); hint.style.color = ''; hint.textContent = '';
+  const schoolId = $('#invM_school').value, sc = schoolsCache.find(x => x.id === schoolId) || {};
+  const kind = btn.dataset.qs;
   try {
-    const r = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId: $('#invM_school').value, includeSetup: confirm('Include the one-time setup fee?\n\nOK = setup + yearly subscription (new school)\nCancel = yearly subscription only (renewal)') } });
+    if (kind === 'agreed') {
+      const amt = Number(sc.billingAmount) || 0;
+      invEditor.set([{ kind: 'subscription', description: 'Yearly hosting charges and annual maintenance', qty: 1, rate: amt }]);
+      if (!$('#invM_desc').value) $('#invM_desc').value = 'Yearly hosting charges and annual maintenance';
+      hint.textContent = amt ? 'Filled with ' + sc.name + "'s agreed amount. Change it below if needed." : 'This school has no agreed amount saved. Type the amount in the Rate box below.';
+      return;
+    }
+    const r = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId, includeSetup: kind === 'new' } });
+    if (r.missing.includes('plan')) { hint.style.color = '#C62848'; hint.textContent = sc.name + ' has no plan yet. Close this, press Edit on the school and choose its Plan. Or tap "Agreed amount" instead.'; return; }
     invEditor.set(r.lines);
-    if (r.missing.length) showErr($('#invM_err'), 'Prices not set in Pricing & GST for: ' + r.missing.join(', ') + '. Those items are at ₹0.');
-    else $('#invM_err').style.display = 'none';
-  } catch (e) { showErr($('#invM_err'), e.message); }
-});
+    if (!$('#invM_desc').value) $('#invM_desc').value = kind === 'new' ? 'New school setup and first year' : 'Yearly renewal';
+    if (r.missing.length) { hint.style.color = '#C62848'; hint.textContent = 'Some prices are not set yet (' + r.missing.join(', ') + '). Type them below, or fill them once in Billing setup.'; }
+    else hint.textContent = 'Filled from your prices. Change anything below if needed.';
+  } catch (e) { hint.style.color = '#C62848'; hint.textContent = e.message; }
+}));
 function invPayload() {
   const on = $('#invM_gst').checked;
   return {
@@ -2824,32 +2904,43 @@ $('#payM_save').addEventListener('click', async () => {
 /* ---- Pricing & GST modal ---- */
 const PRICE_MODS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications'];
 makeModal('priceModalOv', `
-  <h3>Pricing &amp; GST</h3>
-  <div class="modal-sub">Your price list. Quotations, invoices and renewals fill their prices from here. Leave a price empty if you have not decided it.</div>
-  <h4 style="margin:6px 0;">Packages (per year)</h4>
-  <div class="grid-2"><div class="field"><label>All modules (₹ / year)</label><input type="number" id="pr_all" min="0" step="1"></div>
-  <div class="field"><label>All modules + school website (₹ / year)</label><input type="number" id="pr_allw" min="0" step="1"></div></div>
-  <h4 style="margin:6px 0;">One-time setup fee</h4>
+  <h3>Billing setup</h3>
+  <div class="modal-sub">Fill this once. After that every bill, quotation and receipt fills itself in. You can change it any time.</div>
+  <div style="background:#EEF0FB; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+  <h4 style="margin:0 0 8px; color:#1F2A6B;">① Your business <span style="font-weight:400; font-size:0.8em;">(printed at the top of every bill)</span></h4>
+  <div class="grid-2"><div class="field"><label>Business name</label><input type="text" id="bz_name" placeholder="SVM EdTech"></div>
+  <div class="field"><label>Phone</label><input type="text" id="bz_phone"></div></div>
+  <div class="grid-2"><div class="field"><label>Email</label><input type="text" id="bz_email"></div>
+  <div class="field"><label>PAN (optional)</label><input type="text" id="pr_pan"></div></div>
+  <div class="field"><label>Address</label><textarea id="bz_addr" style="min-height:50px;"></textarea></div>
+  <div class="field" style="margin-bottom:0;"><label>How should schools pay you? (UPI ID, bank name, account number, IFSC)</label><textarea id="bz_pay" placeholder="e.g. UPI: yourname@upi&#10;Bank: ... A/c: ... IFSC: ..."></textarea></div></div>
+  <div style="background:#FFF6E3; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+  <h4 style="margin:0 0 8px; color:#A85F0B;">② What you charge <span style="font-weight:400; font-size:0.8em;">(in rupees. Leave empty if not decided)</span></h4>
+  <div class="modal-sub" style="margin:0 0 6px;"><b>Every year</b> (renewal)</div>
+  <div class="grid-2"><div class="field"><label>All modules</label><input type="number" id="pr_all" min="0" step="1"></div>
+  <div class="field"><label>All modules + school website</label><input type="number" id="pr_allw" min="0" step="1"></div></div>
+  <div class="modal-sub" style="margin:0 0 6px;"><b>Only once</b>, when a school joins (setup)</div>
   <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;"><div class="field"><label>Selected modules</label><input type="number" id="pr_su_sel" min="0"></div>
   <div class="field"><label>All modules</label><input type="number" id="pr_su_all" min="0"></div>
   <div class="field"><label>All + website</label><input type="number" id="pr_su_allw" min="0"></div></div>
-  <h4 style="margin:6px 0;">Per module (₹ / year, used for "Selected modules")</h4>
-  <div class="grid-2" id="pr_mods"></div>
-  <h4 style="margin:10px 0 6px;">GST</h4>
-  <div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="pr_gst" style="width:auto;"> I am registered for GST. Add GST to new quotations and invoices.</label>
-    <div class="modal-sub" style="margin:4px 0 0;">Off now because SVM EdTech is not registered yet. Older invoices never change when you switch this.</div></div>
+  <details><summary style="cursor:pointer; font-size:0.82rem; color:#1F2A6B;">Schools that buy only some modules: price of each module per year</summary>
+  <div class="grid-2" id="pr_mods" style="margin-top:8px;"></div></details></div>
+  <div style="background:#E8F7F0; border-radius:10px; padding:12px 14px;">
+  <h4 style="margin:0 0 8px; color:#14735A;">③ Tax and payment time</h4>
+  <div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="pr_gst" style="width:auto;"> I am registered for GST. Add GST to new bills.</label>
+    <div class="modal-sub" style="margin:4px 0 0;">Keep this off until you register. Old bills never change when you switch it on.</div></div>
   <div class="grid-2"><div class="field"><label>GST rate (%)</label><input type="number" id="pr_rate" min="0" max="28" step="0.01"></div>
   <div class="field"><label>Your GSTIN</label><input type="text" id="pr_gstin"></div></div>
-  <div class="grid-2"><div class="field"><label>PAN</label><input type="text" id="pr_pan"></div>
-  <div class="field"><label>Invoice due in (days)</label><input type="number" id="pr_due" min="0" max="180"></div></div>
-  <div class="field"><label>Quotation valid for (days)</label><input type="number" id="pr_qv" min="1" max="180"></div>
-  <div class="field"><label>Terms (printed on quotations and invoices)</label><textarea id="pr_terms" placeholder="e.g. Fees are non-refundable. Renewal is due before the plan end date."></textarea></div>
+  <div class="grid-2"><div class="field"><label>Bill is due in (days)</label><input type="number" id="pr_due" min="0" max="180"></div>
+  <div class="field"><label>Quotation valid for (days)</label><input type="number" id="pr_qv" min="1" max="180"></div></div>
+  <div class="field" style="margin-bottom:0;"><label>Terms printed on bills (optional)</label><textarea id="pr_terms" placeholder="e.g. Please renew before the plan end date."></textarea></div></div>
   <div class="modal-error" id="pr_err"></div>
-  <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="pr_close">Close</button><button type="button" class="btn btn-accent" id="pr_save">Save prices</button></div></div>`, true);
+  <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="pr_close">Close</button><button type="button" class="btn btn-accent" id="pr_save">Save</button></div></div>`, true);
 $('#pr_mods').innerHTML = PRICE_MODS.map(m => `<div class="field"><label>${esc(PLAN_MODULE_LABELS[m] || m)}</label><input type="number" min="0" data-pm="${m}"></div>`).join('');
 function openPricingModal() {
   const s = settingsCache || {}, c = cfgNow();
   const v = x => (x == null ? '' : x);
+  $('#bz_name').value = v(s.companyName); $('#bz_phone').value = v(s.contactPhone); $('#bz_email').value = v(s.contactEmail); $('#bz_addr').value = v(s.companyAddress); $('#bz_pay').value = v(s.paymentDetails);
   $('#pr_all').value = v(s.defaultPriceErpAllModules); $('#pr_allw').value = v(s.defaultPriceErpAllModulesWebsite);
   $('#pr_su_sel').value = v(c.setupFees.erp_selected_modules); $('#pr_su_all').value = v(c.setupFees.erp_all_modules); $('#pr_su_allw').value = v(c.setupFees.erp_all_modules_website);
   document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { i.value = v(c.moduleYearly[i.dataset.pm]); });
@@ -2863,15 +2954,29 @@ $('#pr_save').addEventListener('click', async () => {
   const moduleYearly = {}; document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { moduleYearly[i.dataset.pm] = i.value; });
   try {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
-      contactEmail: s.contactEmail, contactPhone: s.contactPhone, contactWhatsapp: s.contactWhatsapp, companyName: s.companyName, companyAddress: s.companyAddress, paymentDetails: s.paymentDetails,
+      contactEmail: $('#bz_email').value, contactPhone: $('#bz_phone').value, contactWhatsapp: s.contactWhatsapp, companyName: $('#bz_name').value, companyAddress: $('#bz_addr').value, paymentDetails: $('#bz_pay').value,
       defaultPriceErpAllModules: $('#pr_all').value, defaultPriceErpAllModulesWebsite: $('#pr_allw').value,
       billingConfig: { moduleYearly, setupFees: { erp_selected_modules: $('#pr_su_sel').value, erp_all_modules: $('#pr_su_all').value, erp_all_modules_website: $('#pr_su_allw').value },
         gstEnabled: $('#pr_gst').checked, gstRate: $('#pr_rate').value, gstin: $('#pr_gstin').value, pan: $('#pr_pan').value, dueDays: $('#pr_due').value, quoteValidityDays: $('#pr_qv').value, terms: $('#pr_terms').value },
     } });
-    closeM('priceModalOv'); showToast('Pricing and GST settings saved.');
+    closeM('priceModalOv'); showToast('Billing setup saved.'); renderSetupHint();
   } catch (e) { showErr($('#pr_err'), e.message); }
 });
 $('#btnPricing').addEventListener('click', openPricingModal);
+
+function renderSetupHint() {
+  const el = $('#billSetupHint'); if (!el) return;
+  const s = settingsCache || {}, c = cfgNow();
+  const anyPrice = s.defaultPriceErpAllModules != null || s.defaultPriceErpAllModulesWebsite != null || Object.values(c.setupFees || {}).some(x => x != null) || Object.values(c.moduleYearly || {}).some(x => x != null);
+  const todo = [];
+  if (!s.companyName || !s.companyAddress) todo.push('your business name and address');
+  if (!s.paymentDetails) todo.push('how schools should pay you (UPI / bank)');
+  if (!anyPrice) todo.push('what you charge');
+  if (!todo.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<b>Finish your billing setup (1 minute).</b> Still to fill: ' + todo.join(', ') + '. <button class="btn btn-accent btn-sm" id="btnSetupHint" style="margin-left:8px;">Open Billing setup</button>';
+  $('#btnSetupHint').addEventListener('click', openPricingModal);
+}
 
 /* ---- Quotes tab ---- */
 function renderQuotesTable() {
@@ -2920,7 +3025,7 @@ makeModal('qtModalOv', `
   <div class="field" id="qt_modsrow" style="display:none;"><label>Modules</label><div id="qt_mods" style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:0.82rem;"></div></div>
   <div style="margin-bottom:8px;"><button type="button" class="btn btn-light btn-sm" id="qt_fill">Fill from price list</button></div>
   <div id="qt_lines"></div>
-  <div style="margin:8px 0 12px;"><button type="button" class="btn btn-light btn-sm" id="qt_add">+ Add item</button></div>
+  <div class="field" style="margin:10px 0 12px;"><select id="qt_pick" style="width:100%; padding:9px 11px; border:1.5px solid var(--border); border-radius:8px; font-size:0.85rem;"></select></div>
   <div class="grid-2"><div class="field"><label>Discount (₹)</label><input type="number" id="qt_disc" min="0" step="0.01" value="0"></div><div class="field"><label>Valid until</label><input type="date" id="qt_valid"></div></div>
   <div class="grid-2"><div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="qt_gst" style="width:auto;"> Add GST</label></div><div class="field" id="qt_ratewrap"><input type="number" id="qt_rate" min="0" max="28" step="0.01" placeholder="GST %"></div></div>
   <div class="field" id="qt_statusrow"><label>Status</label><select id="qt_status"><option value="draft">Draft</option><option value="sent">Sent to school</option><option value="accepted">Accepted</option><option value="declined">Declined</option></select></div>
@@ -2944,6 +3049,7 @@ function qtPlanUi() {
 }
 $('#qt_plan').addEventListener('change', qtPlanUi);
 $('#qt_school').addEventListener('change', () => {
+  fillItemPicker('qt_pick', $('#qt_school').value);
   const s = schoolsCache.find(x => x.id === $('#qt_school').value);
   if (!s) return;
   $('#qt_name').value = s.name; $('#qt_contact').value = s.contactName || ''; $('#qt_phone').value = s.contactPhone || ''; $('#qt_email').value = s.contactEmail || ''; $('#qt_addr').value = s.billingAddress || '';
@@ -2956,11 +3062,11 @@ $('#qt_fill').addEventListener('click', async () => {
     const planModules = Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value);
     const r = await api('/api/billing/price-preview', { method: 'POST', body: { planType, planModules } });
     qtEditor.set(r.lines);
-    if (r.missing.length) showErr($('#qt_err'), 'Prices not set in Pricing & GST for: ' + r.missing.join(', ') + '. Those items are at ₹0, so edit them here.');
+    if (r.missing.length) showErr($('#qt_err'), 'Prices not set in Billing setup for: ' + r.missing.join(', ') + '. Those items are at ₹0, so edit them here.');
     else $('#qt_err').style.display = 'none';
   } catch (e) { showErr($('#qt_err'), e.message); }
 });
-$('#qt_add').addEventListener('click', () => qtEditor.add({ kind: 'other', description: '', qty: 1, rate: 0 }));
+$('#qt_pick').addEventListener('change', () => pickItem('qt_pick', $('#qt_school').value, qtEditor, null));
 function openQuoteModal(q) {
   editingQuote = q || null; const c = cfgNow();
   $('#qt_title').textContent = q ? 'Edit Quotation — ' + q.quoteNumber : 'New Quotation';
@@ -2969,6 +3075,7 @@ function openQuoteModal(q) {
   $('#qt_name').value = q ? q.partyName || '' : ''; $('#qt_contact').value = q ? q.partyContact || '' : ''; $('#qt_phone').value = q ? q.partyPhone || '' : ''; $('#qt_email').value = q ? q.partyEmail || '' : ''; $('#qt_addr').value = q ? q.partyAddress || '' : '';
   $('#qt_plan').value = q ? q.planType || '' : ''; qtPlanUi();
   document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = !!(q && (q.planModules || []).includes(cb.value)); });
+  fillItemPicker('qt_pick', $('#qt_school').value);
   qtEditor.set(q ? q.lines : []);
   $('#qt_disc').value = q ? q.discount : 0;
   const vu = new Date(Date.now() + 5.5 * 3600e3 + c.quoteValidityDays * 86400e3).toISOString().slice(0, 10);
@@ -3009,7 +3116,7 @@ async function generateRenewal(schoolId) {
     const pv = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId, includeSetup: false } });
     if (!(s.billingAmount > 0)) {
       if (pv.missing.includes('plan')) { showToast(s.name + " has no plan yet. Press Edit on the school and choose its Plan (or enter a Billing Amount), then try again.", 7000); return; }
-      if (pv.missing.length) { showToast('Set these prices first in Pricing & GST: ' + pv.missing.join(', ') + '.', 7000); return; }
+      if (pv.missing.length) { showToast('Set these prices first in Billing setup: ' + pv.missing.join(', ') + '.', 7000); return; }
     }
     const amt = s.billingAmount > 0 ? s.billingAmount : pv.totals.total;
     if (!confirm('Generate the yearly renewal invoice for ' + s.name + '?\n\nAbout ' + money2(amt) + (s.planValidUntil ? '\nCurrent plan runs to ' + dfmt(s.planValidUntil) : '') + '\n(It is made from the school\'s agreed amount, or from the price list.)')) return;
