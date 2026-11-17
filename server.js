@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { neon } from '@neondatabase/serverless';
+import * as BL from './billing-logic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -437,6 +438,60 @@ async function ensureSchema() {
   await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS company_name TEXT`;
   await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS company_address TEXT`;
   await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS payment_details TEXT`;
+  // ----- Billing suite: price list, quotations, line-item invoices, payments + receipts -----
+  await sql`ALTER TABLE vendor_settings ADD COLUMN IF NOT EXISTS billing_config JSONB`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_valid_until DATE`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS billing_address TEXT`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS school_gstin TEXT`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS lines JSONB`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS subtotal NUMERIC(12,2)`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS discount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS term_start DATE`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS term_end DATE`;
+  await sql`ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS quote_id TEXT`;
+  await sql`UPDATE vendor_invoices SET subtotal = amount WHERE subtotal IS NULL`;
+  await sql`CREATE SEQUENCE IF NOT EXISTS vendor_quote_seq START 1`;
+  await sql`CREATE SEQUENCE IF NOT EXISTS vendor_receipt_seq START 1`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS vendor_quotes (
+      id TEXT PRIMARY KEY,
+      quote_number TEXT,
+      school_id TEXT REFERENCES schools(id) ON DELETE SET NULL,
+      party_name TEXT, party_contact TEXT, party_phone TEXT, party_email TEXT, party_address TEXT,
+      plan_type TEXT, plan_modules JSONB,
+      lines JSONB, subtotal NUMERIC(12,2) NOT NULL DEFAULT 0, discount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      gst_applicable BOOLEAN NOT NULL DEFAULT false, gst_rate NUMERIC(5,2), gst_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft', valid_until DATE, notes TEXT, converted_invoice_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS vendor_payments (
+      id TEXT PRIMARY KEY,
+      receipt_number TEXT,
+      invoice_id TEXT NOT NULL REFERENCES vendor_invoices(id) ON DELETE CASCADE,
+      school_id TEXT,
+      amount NUMERIC(12,2) NOT NULL,
+      paid_on DATE NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'other',
+      reference TEXT, notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_vendor_payments_invoice ON vendor_payments (invoice_id)`;
+  // Invoices marked paid before receipts existed get one payment each, so every rupee has a receipt.
+  const legacyPaid = await sql`
+    SELECT i.id, i.school_id, COALESCE(i.total_amount, i.amount) AS total, i.paid_at FROM vendor_invoices i
+    WHERE i.status = 'paid' AND NOT EXISTS (SELECT 1 FROM vendor_payments p WHERE p.invoice_id = i.id)`;
+  for (const r of legacyPaid) {
+    const n = Number((await sql`SELECT nextval('vendor_receipt_seq') AS n`)[0].n);
+    const when = r.paid_at ? new Date(r.paid_at) : new Date();
+    await sql`INSERT INTO vendor_payments (id, receipt_number, invoice_id, school_id, amount, paid_on, mode, notes)
+      VALUES (${'pay_' + crypto.randomBytes(8).toString('hex')}, ${'SVR-' + when.getFullYear() + '-' + String(n).padStart(4, '0')}, ${r.id}, ${r.school_id}, ${r.total}, ${when.toISOString().slice(0, 10)}, 'other', 'Recorded from the earlier "Mark Paid"')`;
+    await sql`UPDATE vendor_invoices SET paid_amount = ${r.total} WHERE id = ${r.id}`;
+  }
 }
 
 // A school's plan — what it's actually entitled to — as distinct from its
@@ -709,6 +764,7 @@ function shapeSettings(row) {
     companyName: row ? row.company_name : null,
     companyAddress: row ? row.company_address : null,
     paymentDetails: row ? row.payment_details : null,
+    billingConfig: BL.cleanBillingConfig({}, row && row.billing_config),
     updatedAt: row ? row.updated_at : null,
   };
 }
@@ -725,12 +781,14 @@ app.get('/api/settings', async (req, res) => {
 
 app.put('/api/settings', async (req, res) => {
   try {
-    const { contactEmail, contactPhone, contactWhatsapp, defaultPriceErpAllModules, defaultPriceErpAllModulesWebsite, companyName, companyAddress, paymentDetails } = req.body || {};
+    const { contactEmail, contactPhone, contactWhatsapp, defaultPriceErpAllModules, defaultPriceErpAllModulesWebsite, companyName, companyAddress, paymentDetails, billingConfig } = req.body || {};
+    const curRow = (await sql`SELECT billing_config FROM vendor_settings WHERE id = 'default'`)[0];
+    const cleanedCfg = JSON.stringify(BL.cleanBillingConfig(billingConfig || {}, curRow && curRow.billing_config));
     const priceAll = defaultPriceErpAllModules != null && defaultPriceErpAllModules !== '' ? Number(defaultPriceErpAllModules) : null;
     const priceAllWebsite = defaultPriceErpAllModulesWebsite != null && defaultPriceErpAllModulesWebsite !== '' ? Number(defaultPriceErpAllModulesWebsite) : null;
     await sql`
-      INSERT INTO vendor_settings (id, contact_email, contact_phone, contact_whatsapp, default_price_erp_all_modules, default_price_erp_all_modules_website, updated_at)
-      VALUES ('default', ${contactEmail || null}, ${contactPhone || null}, ${contactWhatsapp || null}, ${priceAll}, ${priceAllWebsite}, now())
+      INSERT INTO vendor_settings (id, contact_email, contact_phone, contact_whatsapp, default_price_erp_all_modules, default_price_erp_all_modules_website, company_name, company_address, payment_details, billing_config, updated_at)
+      VALUES ('default', ${contactEmail || null}, ${contactPhone || null}, ${contactWhatsapp || null}, ${priceAll}, ${priceAllWebsite}, ${companyName || null}, ${companyAddress || null}, ${paymentDetails || null}, ${cleanedCfg}::jsonb, now())
       ON CONFLICT (id) DO UPDATE SET
         contact_email = ${contactEmail || null},
         contact_phone = ${contactPhone || null},
@@ -740,6 +798,7 @@ app.put('/api/settings', async (req, res) => {
         company_name = ${companyName || null},
         company_address = ${companyAddress || null},
         payment_details = ${paymentDetails || null},
+        billing_config = ${cleanedCfg}::jsonb,
         updated_at = now()
     `;
     const rows = await sql`SELECT * FROM vendor_settings WHERE id = 'default'`;
@@ -787,6 +846,9 @@ function shapeSchool(row, errorCount24h) {
     parentSchoolId: row.parent_school_id,
     planType: row.plan_type,
     planModules: row.plan_modules || [],
+    planValidUntil: row.plan_valid_until ? String(row.plan_valid_until instanceof Date ? row.plan_valid_until.toISOString() : row.plan_valid_until).slice(0, 10) : null,
+    billingAddress: row.billing_address || null,
+    schoolGstin: row.school_gstin || null,
     accessSuspended: !!row.access_suspended,
     accessSuspendedAt: row.access_suspended_at,
     accessSuspendedReason: row.access_suspended_reason,
@@ -1083,9 +1145,29 @@ app.get('/api/activity', async (req, res) => {
 });
 
 // ---------- Billing ----------
+// Quotations -> invoices -> payments (each with its own numbered receipt). The rules (pricing, GST, part payments,
+// renewal dates) live in billing-logic.js; this section only reads and writes the database.
+const istToday = () => BL.isoDay(new Date(Date.now() + 5.5 * 3600 * 1000));
+const dayStr = v => (v == null ? null : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)));
+const isDay = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T00:00:00Z').getTime());
+const padSeq = n => String(n).padStart(4, '0');
+
+async function getBillingSettings() {
+  const rows = await sql`SELECT * FROM vendor_settings WHERE id = 'default'`;
+  const row = rows[0] || null;
+  return {
+    row,
+    cfg: BL.cleanBillingConfig({}, row && row.billing_config),
+    bundle: {
+      all: row && row.default_price_erp_all_modules != null ? Number(row.default_price_erp_all_modules) : null,
+      allWebsite: row && row.default_price_erp_all_modules_website != null ? Number(row.default_price_erp_all_modules_website) : null,
+    },
+  };
+}
+
 function shapeInvoice(row) {
-  const dueDate = row.due_date ? new Date(row.due_date) : null;
-  const isOverdue = row.status === 'pending' && dueDate && dueDate.getTime() < Date.now();
+  const total = row.total_amount != null ? Number(row.total_amount) : Number(row.amount);
+  const paid = Number(row.paid_amount) || 0;
   return {
     id: row.id,
     invoiceNumber: row.invoice_number,
@@ -1094,7 +1176,7 @@ function shapeInvoice(row) {
     amount: Number(row.amount),
     currency: row.currency,
     status: row.status,
-    effectiveStatus: isOverdue ? 'overdue' : row.status,
+    effectiveStatus: BL.effectiveStatus({ status: row.status, dueDate: row.due_date, today: istToday() }),
     dueDate: row.due_date,
     paidAt: row.paid_at,
     createdAt: row.created_at,
@@ -1105,46 +1187,138 @@ function shapeInvoice(row) {
     gstin: row.gstin,
     gstRate: row.gst_rate != null ? Number(row.gst_rate) : null,
     gstAmount: Number(row.gst_amount) || 0,
-    totalAmount: row.total_amount != null ? Number(row.total_amount) : Number(row.amount),
+    totalAmount: total,
+    totalWords: BL.amountInWords(total),
+    lines: Array.isArray(row.lines) ? row.lines : [],
+    subtotal: row.subtotal != null ? Number(row.subtotal) : Number(row.amount),
+    discount: Number(row.discount) || 0,
+    paidAmount: paid,
+    balance: row.status === 'cancelled' ? 0 : BL.r2(Math.max(0, total - paid)),
+    termStart: dayStr(row.term_start),
+    termEnd: dayStr(row.term_end),
+    quoteId: row.quote_id || null,
   };
 }
 
-// Next sequential invoice number, e.g. SVM-2026-0001 — shared by manual
-// invoices and the generate-invoices action so numbering never collides or
-// skips regardless of which path created the invoice.
-async function nextInvoiceNumber() {
-  const rows = await sql`SELECT nextval('vendor_invoice_seq') AS n`;
-  const n = Number(rows[0].n);
-  return `SVM-${new Date().getFullYear()}-${String(n).padStart(4, '0')}`;
+function shapePayment(row) {
+  return {
+    id: row.id,
+    receiptNumber: row.receipt_number,
+    invoiceId: row.invoice_id,
+    schoolId: row.school_id,
+    amount: Number(row.amount),
+    amountWords: BL.amountInWords(row.amount),
+    paidOn: dayStr(row.paid_on),
+    mode: row.mode,
+    reference: row.reference,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
 }
 
-// GST is off by default — SVM EdTech isn't registered yet (see the
-// Accounting/Billing UI). When it is switched on for an invoice, this
-// computes gst_amount and total_amount from the taxable amount and rate;
-// otherwise the total is simply the amount.
-function computeInvoiceTotals({ amount, gstApplicable, gstRate }) {
-  const base = Number(amount) || 0;
-  if (gstApplicable && gstRate != null && !isNaN(Number(gstRate))) {
-    const rate = Number(gstRate);
-    const gstAmount = Math.round(base * (rate / 100) * 100) / 100;
-    return { gstAmount, totalAmount: Math.round((base + gstAmount) * 100) / 100 };
-  }
-  return { gstAmount: 0, totalAmount: base };
+function shapeQuote(row) {
+  const today = istToday();
+  const validUntil = dayStr(row.valid_until);
+  const open = row.status === 'draft' || row.status === 'sent';
+  return {
+    id: row.id,
+    quoteNumber: row.quote_number,
+    schoolId: row.school_id,
+    partyName: row.party_name,
+    partyContact: row.party_contact,
+    partyPhone: row.party_phone,
+    partyEmail: row.party_email,
+    partyAddress: row.party_address,
+    planType: row.plan_type,
+    planModules: row.plan_modules || [],
+    lines: Array.isArray(row.lines) ? row.lines : [],
+    subtotal: Number(row.subtotal) || 0,
+    discount: Number(row.discount) || 0,
+    gstApplicable: !!row.gst_applicable,
+    gstRate: row.gst_rate != null ? Number(row.gst_rate) : null,
+    gstAmount: Number(row.gst_amount) || 0,
+    totalAmount: Number(row.total_amount) || 0,
+    status: row.status,
+    effectiveStatus: open && validUntil && validUntil < today ? 'expired' : row.status,
+    validUntil,
+    notes: row.notes,
+    convertedInvoiceId: row.converted_invoice_id || null,
+    createdAt: row.created_at,
+  };
+}
+
+// Next sequential numbers, e.g. SVM-2026-0001 / SVQ-2026-0001 / SVR-2026-0001. Each has its own counter.
+async function nextNumber(prefix, seq) {
+  const rows = seq === 'invoice' ? await sql`SELECT nextval('vendor_invoice_seq') AS n`
+    : seq === 'quote' ? await sql`SELECT nextval('vendor_quote_seq') AS n`
+    : await sql`SELECT nextval('vendor_receipt_seq') AS n`;
+  return `${prefix}-${istToday().slice(0, 4)}-${padSeq(Number(rows[0].n))}`;
+}
+const nextInvoiceNumber = () => nextNumber('SVM', 'invoice');
+
+// Lines + discount + GST in one step. GST follows the global switch (Pricing & GST) unless the caller says otherwise.
+function figures({ lines, amount, discount, gstApplicable, gstRate, cfg }) {
+  const clean = BL.cleanLines(lines);
+  const applicable = gstApplicable != null ? !!gstApplicable : !!cfg.gstEnabled;
+  const rate = applicable ? (gstRate != null && gstRate !== '' ? Number(gstRate) : cfg.gstRate) : null;
+  const totals = BL.computeTotals({ lines: clean, amount, discount, gstApplicable: applicable, gstRate: rate });
+  return { lines: clean, totals, gstApplicable: applicable, gstRate: applicable ? rate : null };
+}
+
+// Re-reads an invoice's payments and sets how much is paid, its status, and the school's plan-valid-until date.
+async function refreshInvoice(invoiceId) {
+  const inv = (await sql`SELECT * FROM vendor_invoices WHERE id = ${invoiceId}`)[0];
+  if (!inv) return null;
+  const agg = (await sql`SELECT COALESCE(SUM(amount), 0) AS paid, MAX(paid_on) AS last_on FROM vendor_payments WHERE invoice_id = ${invoiceId}`)[0];
+  const paid = BL.r2(agg.paid);
+  const total = inv.total_amount != null ? Number(inv.total_amount) : Number(inv.amount);
+  const status = BL.paymentStatus({ total, paid, status: inv.status === 'cancelled' ? 'cancelled' : undefined });
+  const paidAt = status === 'paid' ? (dayStr(agg.last_on) || istToday()) : null;
+  await sql`UPDATE vendor_invoices SET paid_amount = ${paid}, status = ${status}, paid_at = ${paidAt} WHERE id = ${invoiceId}`;
+  if (inv.school_id) await refreshPlanValidity(inv.school_id);
+  return (await sql`SELECT * FROM vendor_invoices WHERE id = ${invoiceId}`)[0];
+}
+
+// A school's plan runs to the end of the last fully paid yearly invoice. Schools that have no dated invoices yet
+// keep whatever date was set by hand.
+async function refreshPlanValidity(schoolId) {
+  const any = await sql`SELECT 1 AS x FROM vendor_invoices WHERE school_id = ${schoolId} AND term_end IS NOT NULL AND status <> 'cancelled' LIMIT 1`;
+  if (!any.length) return;
+  const r = await sql`SELECT MAX(term_end) AS v FROM vendor_invoices WHERE school_id = ${schoolId} AND status = 'paid' AND term_end IS NOT NULL`;
+  await sql`UPDATE schools SET plan_valid_until = ${dayStr(r[0].v)} WHERE id = ${schoolId}`;
+}
+
+const PAY_MODES = ['upi', 'bank_transfer', 'cash', 'cheque', 'other'];
+async function addPayment({ invoiceId, amount, paidOn, mode, reference, notes }) {
+  const inv = (await sql`SELECT * FROM vendor_invoices WHERE id = ${invoiceId}`)[0];
+  if (!inv) { const e = new Error('Invoice not found.'); e.status = 404; throw e; }
+  if (inv.status === 'cancelled') { const e = new Error('This invoice is cancelled.'); e.status = 400; throw e; }
+  const total = inv.total_amount != null ? Number(inv.total_amount) : Number(inv.amount);
+  const balance = BL.r2(total - (Number(inv.paid_amount) || 0));
+  const amt = BL.r2(amount);
+  if (!(amt > 0)) { const e = new Error('Please enter the amount received.'); e.status = 400; throw e; }
+  if (amt > balance + 0.005) { const e = new Error('That is more than the balance due (₹' + balance.toLocaleString('en-IN') + ').'); e.status = 400; throw e; }
+  const on = paidOn || istToday();
+  if (!isDay(on)) { const e = new Error('Payment date must look like YYYY-MM-DD.'); e.status = 400; throw e; }
+  if (on > BL.addDays(istToday(), 1)) { const e = new Error('Payment date cannot be in the future.'); e.status = 400; throw e; }
+  const id = 'pay_' + crypto.randomBytes(8).toString('hex');
+  const receiptNumber = await nextNumber('SVR', 'receipt');
+  await sql`
+    INSERT INTO vendor_payments (id, receipt_number, invoice_id, school_id, amount, paid_on, mode, reference, notes)
+    VALUES (${id}, ${receiptNumber}, ${invoiceId}, ${inv.school_id}, ${amt}, ${on}, ${mode || 'other'}, ${reference ? String(reference).slice(0, 120) : null}, ${notes ? String(notes).slice(0, 400) : null})
+  `;
+  await refreshInvoice(invoiceId);
+  return (await sql`SELECT * FROM vendor_payments WHERE id = ${id}`)[0];
 }
 
 app.get('/api/invoices', async (req, res) => {
   try {
     const { schoolId, status } = req.query || {};
     let rows;
-    if (schoolId && status) {
-      rows = await sql`SELECT * FROM vendor_invoices WHERE school_id = ${schoolId} AND status = ${status} ORDER BY created_at DESC`;
-    } else if (schoolId) {
-      rows = await sql`SELECT * FROM vendor_invoices WHERE school_id = ${schoolId} ORDER BY created_at DESC`;
-    } else if (status) {
-      rows = await sql`SELECT * FROM vendor_invoices WHERE status = ${status} ORDER BY created_at DESC`;
-    } else {
-      rows = await sql`SELECT * FROM vendor_invoices ORDER BY created_at DESC`;
-    }
+    if (schoolId && status) rows = await sql`SELECT * FROM vendor_invoices WHERE school_id = ${schoolId} AND status = ${status} ORDER BY created_at DESC`;
+    else if (schoolId) rows = await sql`SELECT * FROM vendor_invoices WHERE school_id = ${schoolId} ORDER BY created_at DESC`;
+    else if (status) rows = await sql`SELECT * FROM vendor_invoices WHERE status = ${status} ORDER BY created_at DESC`;
+    else rows = await sql`SELECT * FROM vendor_invoices ORDER BY created_at DESC`;
     return res.status(200).json(rows.map(shapeInvoice));
   } catch (err) {
     console.error('list invoices error:', err);
@@ -1152,30 +1326,50 @@ app.get('/api/invoices', async (req, res) => {
   }
 });
 
+// Fills in the dates for an invoice that contains a yearly subscription line.
+function termFor(lines, body, planValidUntil) {
+  if (!lines.some(l => l.kind === 'subscription')) return { termStart: null, termEnd: null };
+  const a = body.termStart && isDay(body.termStart) ? body.termStart : null;
+  const auto = BL.nextTerm({ planValidUntil: dayStr(planValidUntil), today: istToday() });
+  const termStart = a || auto.termStart;
+  const termEnd = body.termEnd && isDay(body.termEnd) ? body.termEnd : BL.termEndForYear(termStart);
+  return { termStart, termEnd };
+}
+
+async function insertInvoice({ school, description, fig, dueDate, notes, source, billingPeriod, termStart, termEnd, quoteId, gstin }) {
+  const id = 'inv_' + crypto.randomBytes(8).toString('hex');
+  const invoiceNumber = await nextInvoiceNumber();
+  const t = fig.totals;
+  await sql`
+    INSERT INTO vendor_invoices
+      (id, invoice_number, school_id, description, amount, currency, status, due_date, notes, source, billing_period,
+       gst_applicable, gstin, gst_rate, gst_amount, total_amount, lines, subtotal, discount, paid_amount, term_start, term_end, quote_id)
+    VALUES
+      (${id}, ${invoiceNumber}, ${school.id}, ${description || null}, ${t.taxable}, 'INR', 'pending', ${dueDate || null}, ${notes || null}, ${source}, ${billingPeriod || null},
+       ${fig.gstApplicable}, ${gstin || school.school_gstin || null}, ${fig.gstRate}, ${t.gstAmount}, ${t.total}, ${JSON.stringify(fig.lines)}, ${t.subtotal}, ${t.discount}, 0, ${termStart || null}, ${termEnd || null}, ${quoteId || null})
+  `;
+  return id;
+}
+
 app.post('/api/invoices', async (req, res) => {
   try {
-    const { schoolId, description, amount, currency, status, dueDate, notes, gstApplicable, gstin, gstRate } = req.body || {};
-    if (!schoolId) return res.status(400).json({ error: 'schoolId is required.' });
-    if (amount == null || isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'A positive amount is required.' });
-    const school = await sql`SELECT id FROM schools WHERE id = ${schoolId}`;
-    if (!school.length) return res.status(404).json({ error: 'School not found.' });
-    const id = 'inv_' + crypto.randomBytes(8).toString('hex');
-    const finalStatus = status || 'pending';
-    const invoiceNumber = await nextInvoiceNumber();
-    const { gstAmount, totalAmount } = computeInvoiceTotals({ amount, gstApplicable, gstRate });
-    await sql`
-      INSERT INTO vendor_invoices
-        (id, invoice_number, school_id, description, amount, currency, status, due_date, paid_at, notes,
-         source, gst_applicable, gstin, gst_rate, gst_amount, total_amount)
-      VALUES
-        (${id}, ${invoiceNumber}, ${schoolId}, ${description || null}, ${Number(amount)}, ${currency || 'INR'}, ${finalStatus},
-         ${dueDate || null}, ${finalStatus === 'paid' ? new Date().toISOString() : null}, ${notes || null},
-         'manual', ${!!gstApplicable}, ${gstin || null}, ${gstApplicable ? (gstRate != null ? Number(gstRate) : null) : null},
-         ${gstAmount}, ${totalAmount})
-    `;
+    const b = req.body || {};
+    if (!b.schoolId) return res.status(400).json({ error: 'schoolId is required.' });
+    const school = (await sql`SELECT * FROM schools WHERE id = ${b.schoolId}`)[0];
+    if (!school) return res.status(404).json({ error: 'School not found.' });
+    const { cfg } = await getBillingSettings();
+    const fig = figures({ lines: b.lines, amount: b.amount, discount: b.discount, gstApplicable: b.gstApplicable, gstRate: b.gstRate, cfg });
+    if (!(fig.totals.total > 0)) return res.status(400).json({ error: 'A positive amount is required.' });
+    const { termStart, termEnd } = termFor(fig.lines, b, school.plan_valid_until);
+    const dueDate = b.dueDate && isDay(b.dueDate) ? b.dueDate : BL.addDays(istToday(), cfg.dueDays);
+    const id = await insertInvoice({ school, description: b.description, fig, dueDate, notes: b.notes, source: 'manual', termStart, termEnd, gstin: b.gstin });
+    // Older screens could create an invoice that is already paid: record it as a real payment so it gets a receipt.
+    if (b.status === 'paid') await addPayment({ invoiceId: id, amount: fig.totals.total, mode: 'other', notes: 'Marked paid when the invoice was created' });
+    else if (b.status === 'cancelled') await sql`UPDATE vendor_invoices SET status = 'cancelled' WHERE id = ${id}`;
     const rows = await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`;
     return res.status(201).json(shapeInvoice(rows[0]));
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('create invoice error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
@@ -1184,80 +1378,335 @@ app.post('/api/invoices', async (req, res) => {
 app.put('/api/invoices/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`;
-    if (!existing.length) return res.status(404).json({ error: 'Invoice not found.' });
-    const cur = existing[0];
-    const { description, amount, currency, status, dueDate, notes, gstApplicable, gstin, gstRate } = req.body || {};
-    const finalStatus = status != null ? status : cur.status;
-    // Stamp paid_at the moment an invoice transitions into 'paid'; clear it if
-    // it's ever moved back out of 'paid' (e.g. correcting a mistaken mark).
-    let paidAt = cur.paid_at;
-    if (finalStatus === 'paid' && cur.status !== 'paid') paidAt = new Date().toISOString();
-    else if (finalStatus !== 'paid') paidAt = null;
-    const finalAmount = amount != null && amount !== '' ? Number(amount) : Number(cur.amount);
-    const finalGstApplicable = gstApplicable != null ? !!gstApplicable : cur.gst_applicable;
-    const finalGstRate = finalGstApplicable ? (gstRate != null ? Number(gstRate) : (cur.gst_rate != null ? Number(cur.gst_rate) : null)) : null;
-    const { gstAmount, totalAmount } = computeInvoiceTotals({ amount: finalAmount, gstApplicable: finalGstApplicable, gstRate: finalGstRate });
+    const cur = (await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0];
+    if (!cur) return res.status(404).json({ error: 'Invoice not found.' });
+    const b = req.body || {};
+    const { cfg } = await getBillingSettings();
+    const curLines = Array.isArray(cur.lines) ? cur.lines : [];
+    // Lines sent: use them. Only a single amount sent and it changed: the old lines no longer add up, so it becomes a lump sum.
+    let useLines = curLines, amountIn = cur.subtotal != null ? Number(cur.subtotal) : Number(cur.amount), discountIn = b.discount != null ? b.discount : cur.discount;
+    if (Array.isArray(b.lines)) { useLines = b.lines; amountIn = 0; }
+    else if (b.amount != null && b.amount !== '' && BL.r2(b.amount) !== BL.r2(cur.amount)) { useLines = []; amountIn = Number(b.amount); discountIn = b.discount != null ? b.discount : 0; }
+    const fig = figures({
+      lines: useLines, amount: amountIn, discount: discountIn,
+      gstApplicable: b.gstApplicable != null ? b.gstApplicable : cur.gst_applicable,
+      gstRate: b.gstRate != null ? b.gstRate : cur.gst_rate, cfg,
+    });
+    const paid = Number(cur.paid_amount) || 0;
+    if (fig.totals.total < paid - 0.005) return res.status(400).json({ error: 'The total cannot be less than the ₹' + paid.toLocaleString('en-IN') + ' already received. Delete a payment first.' });
+    if (b.status === 'cancelled' && paid > 0) return res.status(400).json({ error: 'This invoice has payments. Delete the payments first, then cancel it.' });
+    const school = (await sql`SELECT plan_valid_until FROM schools WHERE id = ${cur.school_id}`)[0] || {};
+    const hasTerm = fig.lines.some(l => l.kind === 'subscription');
+    const termStart = b.termStart !== undefined ? (b.termStart && isDay(b.termStart) ? b.termStart : null) : dayStr(cur.term_start);
+    const termEnd = b.termEnd !== undefined ? (b.termEnd && isDay(b.termEnd) ? b.termEnd : null) : dayStr(cur.term_end);
+    const nextStatus = b.status === 'cancelled' ? 'cancelled' : (cur.status === 'cancelled' && b.status != null ? 'pending' : cur.status);
     await sql`
       UPDATE vendor_invoices SET
-        description = ${description != null ? description : cur.description},
-        amount = ${finalAmount},
-        currency = ${currency != null ? currency : cur.currency},
-        status = ${finalStatus},
-        due_date = ${dueDate != null ? dueDate : cur.due_date},
-        paid_at = ${paidAt},
-        notes = ${notes != null ? notes : cur.notes},
-        gst_applicable = ${finalGstApplicable},
-        gstin = ${gstin != null ? gstin : cur.gstin},
-        gst_rate = ${finalGstRate},
-        gst_amount = ${gstAmount},
-        total_amount = ${totalAmount}
+        description = ${b.description != null ? b.description : cur.description},
+        amount = ${fig.totals.taxable},
+        currency = ${b.currency != null ? b.currency : cur.currency},
+        status = ${nextStatus},
+        due_date = ${b.dueDate !== undefined ? (b.dueDate || null) : cur.due_date},
+        notes = ${b.notes != null ? b.notes : cur.notes},
+        gst_applicable = ${fig.gstApplicable},
+        gstin = ${b.gstin != null ? b.gstin : cur.gstin},
+        gst_rate = ${fig.gstRate},
+        gst_amount = ${fig.totals.gstAmount},
+        total_amount = ${fig.totals.total},
+        lines = ${JSON.stringify(fig.lines)},
+        subtotal = ${fig.totals.subtotal},
+        discount = ${fig.totals.discount},
+        term_start = ${hasTerm ? (termStart || termFor(fig.lines, {}, school.plan_valid_until).termStart) : null},
+        term_end = ${hasTerm ? (termEnd || BL.termEndForYear(termStart || termFor(fig.lines, {}, school.plan_valid_until).termStart)) : null}
       WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`;
-    return res.status(200).json(shapeInvoice(rows[0]));
+    // The legacy "Mark Paid" / status = Paid: record the remaining balance as a payment so a receipt exists.
+    if (b.status === 'paid') {
+      const fresh = (await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0];
+      const bal = BL.r2((Number(fresh.total_amount) || 0) - (Number(fresh.paid_amount) || 0));
+      if (bal > 0.005) await addPayment({ invoiceId: id, amount: bal, mode: b.paymentMode && PAY_MODES.includes(b.paymentMode) ? b.paymentMode : 'other', reference: b.paymentReference, notes: 'Marked paid' });
+    }
+    const out = await refreshInvoice(id);
+    return res.status(200).json(shapeInvoice(out));
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('update invoice error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
 });
 
-// Creates one invoice per eligible school for a billing period (defaults to
-// the current calendar month, "YYYY-MM") — the "Generate Invoices" button.
-// Monthly-cycle schools get one every period; annual-cycle schools only get
-// one roughly once every 12 months (measured from their last generated
-// invoice, or their onboarded date if they've never had one). One-time or
-// unset billing cycles are always skipped — those get invoiced by hand.
+// ----- Payments and receipts -----
+app.get('/api/payments', async (req, res) => {
+  try {
+    const { schoolId, invoiceId } = req.query || {};
+    let rows;
+    if (invoiceId) rows = await sql`SELECT * FROM vendor_payments WHERE invoice_id = ${invoiceId} ORDER BY created_at DESC`;
+    else if (schoolId) rows = await sql`SELECT * FROM vendor_payments WHERE school_id = ${schoolId} ORDER BY created_at DESC`;
+    else rows = await sql`SELECT * FROM vendor_payments ORDER BY created_at DESC`;
+    return res.status(200).json(rows.map(shapePayment));
+  } catch (err) {
+    console.error('list payments error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+app.post('/api/invoices/:id/payments', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const mode = PAY_MODES.includes(b.mode) ? b.mode : 'other';
+    const p = await addPayment({ invoiceId: req.params.id, amount: b.amount, paidOn: b.paidOn, mode, reference: b.reference, notes: b.notes });
+    const inv = (await sql`SELECT * FROM vendor_invoices WHERE id = ${req.params.id}`)[0];
+    return res.status(201).json({ payment: shapePayment(p), invoice: shapeInvoice(inv) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('add payment error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+app.delete('/api/payments/:id', async (req, res) => {
+  try {
+    const p = (await sql`SELECT * FROM vendor_payments WHERE id = ${req.params.id}`)[0];
+    if (!p) return res.status(404).json({ error: 'Payment not found.' });
+    await sql`DELETE FROM vendor_payments WHERE id = ${req.params.id}`;
+    const inv = await refreshInvoice(p.invoice_id);
+    return res.status(200).json({ ok: true, invoice: inv ? shapeInvoice(inv) : null });
+  } catch (err) {
+    console.error('delete payment error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// ----- Price preview: what a plan costs from the price list (used by quotes, invoices and renewals) -----
+app.post('/api/billing/price-preview', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { cfg, bundle } = await getBillingSettings();
+    let planType = b.planType, planModules = b.planModules;
+    if (b.schoolId) {
+      const s = (await sql`SELECT plan_type, plan_modules FROM schools WHERE id = ${b.schoolId}`)[0];
+      if (!s) return res.status(404).json({ error: 'School not found.' });
+      if (!planType) planType = s.plan_type;
+      if (!planModules) planModules = s.plan_modules || [];
+    }
+    const p = BL.priceFor({ planType, planModules, cfg, bundle, includeSetup: b.includeSetup !== false, includeSubscription: b.includeSubscription !== false });
+    const fig = figures({ lines: p.lines, discount: b.discount, cfg });
+    return res.status(200).json({ planType: p.plan, lines: fig.lines, missing: p.missing, totals: fig.totals, gstApplicable: fig.gstApplicable, gstRate: fig.gstRate });
+  } catch (err) {
+    console.error('price preview error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// ----- Renewal: one click per onboarded school -----
+app.post('/api/schools/:id/renewal-invoice', async (req, res) => {
+  try {
+    const school = (await sql`SELECT * FROM schools WHERE id = ${req.params.id}`)[0];
+    if (!school) return res.status(404).json({ error: 'School not found.' });
+    if (school.billing_cycle === 'monthly') return res.status(400).json({ error: 'This school is billed monthly. Use Generate Invoices for monthly invoices.' });
+    const { cfg, bundle } = await getBillingSettings();
+    const term = BL.nextTerm({ planValidUntil: dayStr(school.plan_valid_until), today: istToday() });
+    const open = await sql`SELECT invoice_number FROM vendor_invoices WHERE school_id = ${school.id} AND term_start = ${term.termStart} AND status <> 'cancelled' LIMIT 1`;
+    if (open.length) return res.status(409).json({ error: 'A renewal invoice for this term already exists (' + open[0].invoice_number + ').' });
+    let lines;
+    const agreed = school.billing_amount != null ? Number(school.billing_amount) : 0;
+    if (agreed > 0) {
+      lines = [{ kind: 'subscription', description: 'Yearly renewal' + (school.billing_plan ? ' (' + school.billing_plan + ')' : ''), qty: 1, rate: agreed, amount: agreed }];
+    } else {
+      if (!school.plan_type) return res.status(400).json({ error: "Set this school's plan (or its billing amount) first." });
+      const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false });
+      if (p.missing.length) return res.status(400).json({ error: 'Set these prices in Pricing & GST first: ' + p.missing.join(', ') + '.' });
+      lines = p.lines;
+    }
+    const b = req.body || {};
+    const fig = figures({ lines, discount: b.discount, cfg });
+    if (!(fig.totals.total > 0)) return res.status(400).json({ error: 'The renewal amount is zero. Set prices first.' });
+    const fy = term.termStart.slice(0, 4) + '-' + String((Number(term.termStart.slice(0, 4)) + 1) % 100).padStart(2, '0');
+    const id = await insertInvoice({
+      school, description: 'Yearly renewal, ' + term.termStart + ' to ' + term.termEnd, fig,
+      dueDate: BL.addDays(istToday(), cfg.dueDays), notes: b.notes, source: 'renewal', termStart: term.termStart, termEnd: term.termEnd,
+    });
+    void fy;
+    const row = (await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0];
+    return res.status(201).json(shapeInvoice(row));
+  } catch (err) {
+    console.error('renewal invoice error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// ----- Quotations -----
+async function quoteParty(b, cur) {
+  const schoolId = b.schoolId !== undefined ? (b.schoolId || null) : (cur ? cur.school_id : null);
+  let school = null;
+  if (schoolId) { school = (await sql`SELECT * FROM schools WHERE id = ${schoolId}`)[0]; if (!school) { const e = new Error('School not found.'); e.status = 404; throw e; } }
+  const pick = (k, curVal, schoolVal) => b[k] !== undefined ? (String(b[k] || '').trim() || null) : (curVal != null ? curVal : (schoolVal || null));
+  return {
+    schoolId,
+    partyName: pick('partyName', cur && cur.party_name, school && school.name),
+    partyContact: pick('partyContact', cur && cur.party_contact, school && school.contact_name),
+    partyPhone: pick('partyPhone', cur && cur.party_phone, school && school.contact_phone),
+    partyEmail: pick('partyEmail', cur && cur.party_email, school && school.contact_email),
+    partyAddress: pick('partyAddress', cur && cur.party_address, school && school.billing_address),
+  };
+}
+
+app.get('/api/quotes', async (req, res) => {
+  try {
+    const rows = await sql`SELECT * FROM vendor_quotes ORDER BY created_at DESC`;
+    return res.status(200).json(rows.map(shapeQuote));
+  } catch (err) {
+    console.error('list quotes error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+app.post('/api/quotes', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { cfg, bundle } = await getBillingSettings();
+    const party = await quoteParty(b, null);
+    if (!party.partyName) return res.status(400).json({ error: 'Please choose a school or type the name of the school you are quoting.' });
+    let planType = b.planType, planModules = b.planModules;
+    if (party.schoolId && (!planType)) { const s = (await sql`SELECT plan_type, plan_modules FROM schools WHERE id = ${party.schoolId}`)[0]; planType = s.plan_type; planModules = planModules || s.plan_modules || []; }
+    let lines = b.lines;
+    if (!Array.isArray(lines) || !lines.length) {
+      const p = BL.priceFor({ planType, planModules, cfg, bundle });
+      if (!p.plan) return res.status(400).json({ error: 'Please choose the plan to quote.' });
+      lines = p.lines;
+    }
+    const fig = figures({ lines, discount: b.discount, gstApplicable: b.gstApplicable, gstRate: b.gstRate, cfg });
+    if (!fig.lines.length) return res.status(400).json({ error: 'Add at least one line to the quotation.' });
+    const t = fig.totals;
+    const validUntil = b.validUntil && isDay(b.validUntil) ? b.validUntil : BL.addDays(istToday(), cfg.quoteValidityDays);
+    const id = 'qt_' + crypto.randomBytes(8).toString('hex');
+    const quoteNumber = await nextNumber('SVQ', 'quote');
+    await sql`
+      INSERT INTO vendor_quotes (id, quote_number, school_id, party_name, party_contact, party_phone, party_email, party_address,
+        plan_type, plan_modules, lines, subtotal, discount, gst_applicable, gst_rate, gst_amount, total_amount, status, valid_until, notes)
+      VALUES (${id}, ${quoteNumber}, ${party.schoolId}, ${party.partyName}, ${party.partyContact}, ${party.partyPhone}, ${party.partyEmail}, ${party.partyAddress},
+        ${BL.PLAN_TYPES.includes(planType) ? planType : null}, ${JSON.stringify(Array.isArray(planModules) ? planModules : [])}, ${JSON.stringify(fig.lines)}, ${t.subtotal}, ${t.discount},
+        ${fig.gstApplicable}, ${fig.gstRate}, ${t.gstAmount}, ${t.total}, 'draft', ${validUntil}, ${b.notes ? String(b.notes).slice(0, 1000) : null})
+    `;
+    return res.status(201).json(shapeQuote((await sql`SELECT * FROM vendor_quotes WHERE id = ${id}`)[0]));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('create quote error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+app.put('/api/quotes/:id', async (req, res) => {
+  try {
+    const cur = (await sql`SELECT * FROM vendor_quotes WHERE id = ${req.params.id}`)[0];
+    if (!cur) return res.status(404).json({ error: 'Quotation not found.' });
+    const b = req.body || {};
+    if (cur.converted_invoice_id && (b.lines !== undefined || b.discount !== undefined)) return res.status(400).json({ error: 'This quotation is already an invoice, so its lines cannot change.' });
+    const { cfg } = await getBillingSettings();
+    const party = await quoteParty(b, cur);
+    const statuses = ['draft', 'sent', 'accepted', 'declined'];
+    if (b.status !== undefined && !statuses.includes(b.status)) return res.status(400).json({ error: 'Unknown status.' });
+    const fig = figures({
+      lines: Array.isArray(b.lines) ? b.lines : (cur.lines || []), discount: b.discount != null ? b.discount : cur.discount,
+      gstApplicable: b.gstApplicable != null ? b.gstApplicable : cur.gst_applicable, gstRate: b.gstRate != null ? b.gstRate : cur.gst_rate, cfg,
+    });
+    if (!fig.lines.length) return res.status(400).json({ error: 'A quotation needs at least one line.' });
+    const t = fig.totals;
+    await sql`
+      UPDATE vendor_quotes SET
+        school_id = ${party.schoolId}, party_name = ${party.partyName || cur.party_name}, party_contact = ${party.partyContact}, party_phone = ${party.partyPhone},
+        party_email = ${party.partyEmail}, party_address = ${party.partyAddress},
+        lines = ${JSON.stringify(fig.lines)}, subtotal = ${t.subtotal}, discount = ${t.discount},
+        gst_applicable = ${fig.gstApplicable}, gst_rate = ${fig.gstRate}, gst_amount = ${t.gstAmount}, total_amount = ${t.total},
+        status = ${b.status !== undefined ? b.status : cur.status},
+        valid_until = ${b.validUntil !== undefined ? (b.validUntil && isDay(b.validUntil) ? b.validUntil : cur.valid_until) : cur.valid_until},
+        notes = ${b.notes !== undefined ? (b.notes ? String(b.notes).slice(0, 1000) : null) : cur.notes},
+        updated_at = now()
+      WHERE id = ${req.params.id}
+    `;
+    return res.status(200).json(shapeQuote((await sql`SELECT * FROM vendor_quotes WHERE id = ${req.params.id}`)[0]));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('update quote error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+app.delete('/api/quotes/:id', async (req, res) => {
+  try {
+    await sql`DELETE FROM vendor_quotes WHERE id = ${req.params.id}`;
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('delete quote error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// An accepted quotation becomes an invoice for an onboarded school (same lines, discount and GST).
+app.post('/api/quotes/:id/convert', async (req, res) => {
+  try {
+    const q = (await sql`SELECT * FROM vendor_quotes WHERE id = ${req.params.id}`)[0];
+    if (!q) return res.status(404).json({ error: 'Quotation not found.' });
+    if (q.converted_invoice_id) return res.status(409).json({ error: 'This quotation is already an invoice.' });
+    const schoolId = q.school_id || (req.body || {}).schoolId;
+    if (!schoolId) return res.status(400).json({ error: 'Add the school under Schools first, then choose it on this quotation.' });
+    const school = (await sql`SELECT * FROM schools WHERE id = ${schoolId}`)[0];
+    if (!school) return res.status(404).json({ error: 'School not found.' });
+    const { cfg } = await getBillingSettings();
+    const lines = Array.isArray(q.lines) ? q.lines : [];
+    const fig = figures({ lines, discount: q.discount, gstApplicable: q.gst_applicable, gstRate: q.gst_rate, cfg });
+    const { termStart, termEnd } = termFor(fig.lines, {}, school.plan_valid_until);
+    const id = await insertInvoice({
+      school, description: 'As per quotation ' + q.quote_number, fig, dueDate: BL.addDays(istToday(), cfg.dueDays),
+      notes: q.notes, source: 'quotation', termStart, termEnd, quoteId: q.id,
+    });
+    await sql`UPDATE vendor_quotes SET status = 'accepted', school_id = ${schoolId}, converted_invoice_id = ${id}, updated_at = now() WHERE id = ${q.id}`;
+    return res.status(201).json(shapeInvoice((await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0]));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('convert quote error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// Creates one invoice per eligible school for a billing period (defaults to the current calendar month, "YYYY-MM").
+// Monthly schools get one every period. Yearly schools get one when their plan is within 45 days of ending (or, for a
+// school with no dates yet, roughly 12 months after the last one). One-time or unset cycles are skipped: invoice those
+// from a quotation or by hand.
 app.post('/api/invoices/generate', async (req, res) => {
   try {
-    const period = (req.body && req.body.period) || new Date().toISOString().slice(0, 7);
+    const period = (req.body && req.body.period) || istToday().slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'period must look like YYYY-MM.' });
+    const { cfg } = await getBillingSettings();
     const schools = await sql`SELECT * FROM schools WHERE billing_cycle IN ('monthly', 'annual') AND billing_amount IS NOT NULL AND billing_amount > 0`;
-    const created = [];
-    const skipped = [];
+    const created = [], skipped = [];
+    const periodStart = period + '-01';
+    const periodEnd = BL.addDays(BL.isoDay(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 1))), -1);
     for (const school of schools) {
-      const already = await sql`SELECT id FROM vendor_invoices WHERE school_id = ${school.id} AND billing_period = ${period} LIMIT 1`;
+      const already = await sql`SELECT id FROM vendor_invoices WHERE school_id = ${school.id} AND billing_period = ${period} AND status <> 'cancelled' LIMIT 1`;
       if (already.length) { skipped.push({ schoolId: school.id, name: school.name, reason: 'already billed for this period' }); continue; }
+      let termStart = periodStart, termEnd = periodEnd;
       if (school.billing_cycle === 'annual') {
-        const last = await sql`SELECT billing_period, created_at FROM vendor_invoices WHERE school_id = ${school.id} AND source = 'generated' ORDER BY created_at DESC LIMIT 1`;
-        const anchor = last.length ? new Date(last[0].created_at) : (school.onboarded_date ? new Date(school.onboarded_date) : null);
-        if (anchor) {
-          const monthsSince = (new Date(period + '-01').getTime() - anchor.getTime()) / (1000 * 60 * 60 * 24 * 30);
-          if (monthsSince < 11) { skipped.push({ schoolId: school.id, name: school.name, reason: 'not due yet (annual)' }); continue; }
+        const valid = dayStr(school.plan_valid_until);
+        if (valid) {
+          if (valid > BL.addDays(periodEnd, 45)) { skipped.push({ schoolId: school.id, name: school.name, reason: 'not due yet (plan runs to ' + valid + ')' }); continue; }
+          ({ termStart, termEnd } = BL.nextTerm({ planValidUntil: valid, today: periodStart }));
+        } else {
+          const last = await sql`SELECT created_at FROM vendor_invoices WHERE school_id = ${school.id} AND source IN ('generated', 'renewal') AND status <> 'cancelled' ORDER BY created_at DESC LIMIT 1`;
+          const anchor = last.length ? new Date(last[0].created_at) : (school.onboarded_date ? new Date(school.onboarded_date) : null);
+          if (anchor && (new Date(periodStart).getTime() - anchor.getTime()) / 86400000 < 330) { skipped.push({ schoolId: school.id, name: school.name, reason: 'not due yet (annual)' }); continue; }
+          termEnd = BL.termEndForYear(periodStart);
         }
+        const dup = await sql`SELECT invoice_number FROM vendor_invoices WHERE school_id = ${school.id} AND term_start = ${termStart} AND status <> 'cancelled' LIMIT 1`;
+        if (dup.length) { skipped.push({ schoolId: school.id, name: school.name, reason: 'term already invoiced (' + dup[0].invoice_number + ')' }); continue; }
       }
-      const id = 'inv_' + crypto.randomBytes(8).toString('hex');
-      const invoiceNumber = await nextInvoiceNumber();
       const amount = Number(school.billing_amount);
-      const dueDate = new Date(period + '-01'); dueDate.setDate(dueDate.getDate() + 14);
       const description = `${school.billing_plan ? school.billing_plan + ' — ' : ''}${school.billing_cycle === 'annual' ? 'Annual' : 'Monthly'} billing for ${period}`;
-      await sql`
-        INSERT INTO vendor_invoices
-          (id, invoice_number, school_id, description, amount, currency, status, due_date, notes, source, billing_period, gst_amount, total_amount)
-        VALUES
-          (${id}, ${invoiceNumber}, ${school.id}, ${description}, ${amount}, 'INR', 'pending', ${dueDate.toISOString().slice(0,10)}, null, 'generated', ${period}, 0, ${amount})
-      `;
-      created.push({ schoolId: school.id, name: school.name, invoiceNumber, amount });
+      const fig = figures({ lines: [{ kind: 'subscription', description, qty: 1, rate: amount }], cfg });
+      const dueDate = BL.addDays(periodStart, cfg.dueDays);
+      const id = await insertInvoice({ school, description, fig, dueDate, source: 'generated', billingPeriod: period, termStart, termEnd });
+      const inv = (await sql`SELECT invoice_number FROM vendor_invoices WHERE id = ${id}`)[0];
+      created.push({ schoolId: school.id, name: school.name, invoiceNumber: inv.invoice_number, amount: fig.totals.total });
     }
     return res.status(201).json({ period, created, skipped });
   } catch (err) {
@@ -1268,7 +1717,12 @@ app.post('/api/invoices/generate', async (req, res) => {
 
 app.delete('/api/invoices/:id', async (req, res) => {
   try {
+    const paid = await sql`SELECT 1 AS x FROM vendor_payments WHERE invoice_id = ${req.params.id} LIMIT 1`;
+    if (paid.length) return res.status(409).json({ error: 'This invoice has payments with receipts. Delete the payments first (or cancel the invoice).' });
+    const inv = (await sql`SELECT school_id FROM vendor_invoices WHERE id = ${req.params.id}`)[0];
+    await sql`UPDATE vendor_quotes SET converted_invoice_id = NULL, status = 'sent' WHERE converted_invoice_id = ${req.params.id}`;
     await sql`DELETE FROM vendor_invoices WHERE id = ${req.params.id}`;
+    if (inv && inv.school_id) await refreshPlanValidity(inv.school_id);
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('delete invoice error:', err);
@@ -1276,27 +1730,44 @@ app.delete('/api/invoices/:id', async (req, res) => {
   }
 });
 
+// Money still owed is what is left on each invoice (total minus payments received), not the whole invoice;
+// "collected this month" is cash actually received this month.
 app.get('/api/billing/summary', async (req, res) => {
   try {
-    const rows = await sql`SELECT status, amount, due_date, paid_at FROM vendor_invoices`;
-    const now = Date.now();
-    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
-    let outstandingTotal = 0, overdueTotal = 0, overdueCount = 0, collectedThisMonth = 0;
+    const rows = await sql`SELECT status, total_amount, amount, paid_amount, due_date FROM vendor_invoices WHERE status IN ('pending', 'partial')`;
+    const today = istToday();
+    let outstandingTotal = 0, overdueTotal = 0, overdueCount = 0;
     for (const r of rows) {
-      const amt = Number(r.amount) || 0;
-      if (r.status === 'pending') {
-        outstandingTotal += amt;
-        if (r.due_date && new Date(r.due_date).getTime() < now) { overdueTotal += amt; overdueCount++; }
-      }
-      if (r.status === 'paid' && r.paid_at && new Date(r.paid_at).getTime() >= startOfMonth.getTime()) {
-        collectedThisMonth += amt;
-      }
+      const total = r.total_amount != null ? Number(r.total_amount) : Number(r.amount);
+      const bal = BL.r2(Math.max(0, total - (Number(r.paid_amount) || 0)));
+      outstandingTotal += bal;
+      if (r.due_date && dayStr(r.due_date) < today) { overdueTotal += bal; overdueCount++; }
     }
+    const month = today.slice(0, 7);
+    const pay = await sql`SELECT COALESCE(SUM(amount), 0) AS s FROM vendor_payments WHERE to_char(paid_on, 'YYYY-MM') = ${month}`;
+    const count = await sql`SELECT COUNT(*)::int AS n FROM vendor_invoices`;
     return res.status(200).json({
-      outstandingTotal, overdueTotal, overdueCount, collectedThisMonth, invoiceCount: rows.length,
+      outstandingTotal: BL.r2(outstandingTotal), overdueTotal: BL.r2(overdueTotal), overdueCount, collectedThisMonth: BL.r2(pay[0].s), invoiceCount: count[0].n,
     });
   } catch (err) {
     console.error('billing summary error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// Billing details printed on a school's invoices (address, GSTIN) and its plan end date, which can be set by hand.
+app.put('/api/schools/:id/billing-info', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const cur = (await sql`SELECT * FROM schools WHERE id = ${req.params.id}`)[0];
+    if (!cur) return res.status(404).json({ error: 'School not found.' });
+    const valid = b.planValidUntil !== undefined ? (b.planValidUntil && isDay(b.planValidUntil) ? b.planValidUntil : null) : dayStr(cur.plan_valid_until);
+    const addr = b.billingAddress !== undefined ? (String(b.billingAddress || '').trim().slice(0, 500) || null) : cur.billing_address;
+    const gstin = b.schoolGstin !== undefined ? (String(b.schoolGstin || '').trim().toUpperCase().slice(0, 20) || null) : cur.school_gstin;
+    await sql`UPDATE schools SET plan_valid_until = ${valid}, billing_address = ${addr}, school_gstin = ${gstin} WHERE id = ${req.params.id}`;
+    return res.status(200).json(shapeSchool((await sql`SELECT * FROM schools WHERE id = ${req.params.id}`)[0], 0));
+  } catch (err) {
+    console.error('billing-info error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
 });
@@ -1387,38 +1858,36 @@ app.delete('/api/expenses/:id', async (req, res) => {
 // ---------- Accounting summary (income actually collected, expenses, net cash) ----------
 app.get('/api/accounting/summary', async (req, res) => {
   try {
-    const invoiceRows = await sql`SELECT amount, total_amount, status, paid_at FROM vendor_invoices`;
+    // Income = money actually received, without the GST part (GST collected belongs to the government, not to income).
+    const payRows = await sql`
+      SELECT p.amount, p.paid_on, i.amount AS taxable, i.total_amount AS total FROM vendor_payments p JOIN vendor_invoices i ON i.id = p.invoice_id`;
     const expenseRows = await sql`SELECT amount, expense_date FROM vendor_expenses`;
-
-    let incomeCollected = 0;
-    for (const r of invoiceRows) {
-      if (r.status === 'paid' && r.paid_at) incomeCollected += Number(r.total_amount != null ? r.total_amount : r.amount);
-    }
+    const incomePart = r => { const tot = Number(r.total) || 0; return tot > 0 ? Number(r.amount) * (Number(r.taxable) / tot) : Number(r.amount); };
+    let incomeCollected = 0, gstCollected = 0;
+    for (const r of payRows) { const inc = incomePart(r); incomeCollected += inc; gstCollected += Number(r.amount) - inc; }
+    incomeCollected = BL.r2(incomeCollected); gstCollected = BL.r2(gstCollected);
     let expensesTotal = 0;
     for (const r of expenseRows) expensesTotal += Number(r.amount) || 0;
-    const netCashPosition = Math.round((incomeCollected - expensesTotal) * 100) / 100;
+    const netCashPosition = BL.r2(incomeCollected - expensesTotal);
 
-    // Last 12 months, oldest first, for a simple trend view.
     const months = [];
     const now = new Date();
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
       months.push(d.toISOString().slice(0, 7));
     }
     const byMonth = Object.fromEntries(months.map(m => [m, { month: m, income: 0, expenses: 0 }]));
-    for (const r of invoiceRows) {
-      if (r.status === 'paid' && r.paid_at) {
-        const m = new Date(r.paid_at).toISOString().slice(0, 7);
-        if (byMonth[m]) byMonth[m].income += Number(r.total_amount != null ? r.total_amount : r.amount);
-      }
+    for (const r of payRows) {
+      const m = String(r.paid_on instanceof Date ? r.paid_on.toISOString() : r.paid_on).slice(0, 7);
+      if (byMonth[m]) byMonth[m].income += incomePart(r);
     }
     for (const r of expenseRows) {
-      const m = String(r.expense_date).slice(0, 7);
+      const m = String(r.expense_date instanceof Date ? r.expense_date.toISOString() : r.expense_date).slice(0, 7);
       if (byMonth[m]) byMonth[m].expenses += Number(r.amount) || 0;
     }
-    const monthly = months.map(m => ({ ...byMonth[m], net: Math.round((byMonth[m].income - byMonth[m].expenses) * 100) / 100 }));
+    const monthly = months.map(m => ({ month: m, income: BL.r2(byMonth[m].income), expenses: BL.r2(byMonth[m].expenses), net: BL.r2(byMonth[m].income - byMonth[m].expenses) }));
 
-    return res.status(200).json({ incomeCollected, expensesTotal, netCashPosition, monthly });
+    return res.status(200).json({ incomeCollected, gstCollected, expensesTotal, netCashPosition, monthly });
   } catch (err) {
     console.error('accounting summary error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
@@ -2080,6 +2549,7 @@ app.post('/api/ingest/heartbeat', async (req, res) => {
       accessSuspendedReason: school.access_suspended_reason || null,
       planType: school.plan_type || null,
       planModules: school.plan_modules || [],
+      planValidUntil: school.plan_valid_until ? String(school.plan_valid_until instanceof Date ? school.plan_valid_until.toISOString() : school.plan_valid_until).slice(0, 10) : null,
     });
   } catch (err) {
     console.error('heartbeat ingest error:', err);

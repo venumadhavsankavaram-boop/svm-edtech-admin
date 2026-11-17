@@ -140,6 +140,9 @@
   .badge-paid{background:#E4F7EE; color:var(--good);}
   .badge-pending{background:#EEF0FB; color:var(--accent);}
   .badge-overdue{background:#FCE4EA; color:var(--bad);}
+  .le-desc,.le-qty,.le-rate{padding:7px 8px; border:1.5px solid var(--border); border-radius:8px; font-size:0.82rem; font-family:inherit; box-sizing:border-box;}
+  .le-desc:focus,.le-qty:focus,.le-rate:focus{outline:none; border-color:var(--accent);}
+  .badge-partial{background:#FFF4DD; color:#A85F0B;}
   .badge-cancelled{background:#F0F0F5; color:var(--ink-soft);}
   .badge-open{background:#EEF0FB; color:var(--accent);}
   .badge-in_progress{background:#FFF3DE; color:var(--warn);}
@@ -310,6 +313,7 @@
     <button class="tab-btn active" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="schools">Schools</button>
     <button class="tab-btn" data-tab="billing">Billing</button>
+    <button class="tab-btn" data-tab="quotes">Quotes</button>
     <button class="tab-btn" data-tab="accounting">Accounting</button>
     <button class="tab-btn" data-tab="support">Support<span class="count-pill" id="supportCountPill" style="display:none;"></span></button>
     <button class="tab-btn" data-tab="leads">Leads<span class="count-pill" id="leadsCountPill" style="display:none;"></span></button>
@@ -344,21 +348,43 @@
         <div class="panel-head">
           <h2>Invoices</h2>
           <div style="display:flex; gap:8px;">
+            <button class="btn btn-light" id="btnPricing">Pricing &amp; GST</button>
             <button class="btn btn-light" id="btnGenerateInvoices">Generate Invoices</button>
             <button class="btn btn-accent" id="btnAddInvoice">+ Add Invoice</button>
           </div>
+        </div>
+        <div class="filter-bar" style="margin-bottom:6px;">
+          <span class="school-notes" style="align-self:center;">Yearly renewal:</span>
+          <select id="renewSchoolSel"><option value="">Choose a school…</option></select>
+          <button class="btn btn-accent btn-sm" id="btnRenew">Generate renewal invoice</button>
         </div>
         <div class="filter-bar">
           <select id="fltInvoiceSchool"><option value="">All schools</option></select>
           <select id="fltInvoiceStatus">
             <option value="">All statuses</option>
             <option value="pending">Pending</option>
+            <option value="partial">Part paid</option>
             <option value="paid">Paid</option>
             <option value="overdue">Overdue</option>
             <option value="cancelled">Cancelled</option>
           </select>
         </div>
         <div id="invoicesTableWrap"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Receipts</h2></div>
+        <div id="receiptsTableWrap"></div>
+      </div>
+    </div>
+
+    <!-- ===================== Quotes ===================== -->
+    <div class="tab-panel" id="tab-quotes">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Quotations</h2>
+          <div style="display:flex; gap:8px;"><button class="btn btn-light" id="btnPricingQ" onclick="document.getElementById('btnPricing').click()">Pricing &amp; GST</button><button class="btn btn-accent" id="btnAddQuote">+ New Quotation</button></div>
+        </div>
+        <div id="quotesTableWrap"></div>
       </div>
     </div>
 
@@ -788,77 +814,6 @@
   </div>
 </div>
 
-<!-- Add / Edit Invoice Modal -->
-<div class="modal-overlay" id="invoiceModalOverlay">
-  <div class="modal">
-    <h3 id="invoiceModalTitle">Add Invoice</h3>
-    <div class="modal-sub">Track what a school owes and what's been collected.</div>
-    <form id="invoiceForm">
-      <div class="field">
-        <label for="fInvoiceSchool">School</label>
-        <select id="fInvoiceSchool" required></select>
-      </div>
-      <div class="field">
-        <label for="fInvoiceDescription">Description</label>
-        <input type="text" id="fInvoiceDescription" placeholder="e.g. Annual license — 2026-27">
-      </div>
-      <div class="grid-2">
-        <div class="field">
-          <label for="fInvoiceAmount">Amount (₹)</label>
-          <input type="number" id="fInvoiceAmount" min="0.01" step="0.01" required>
-        </div>
-        <div class="field">
-          <label for="fInvoiceDueDate">Due Date</label>
-          <input type="date" id="fInvoiceDueDate">
-        </div>
-      </div>
-      <div class="field">
-        <label for="fInvoiceStatus">Status</label>
-        <select id="fInvoiceStatus">
-          <option value="pending">Pending</option>
-          <option value="paid">Paid</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-      </div>
-      <div class="field" style="border-top:1px solid #263042; padding-top:12px; margin-top:4px;">
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-          <input type="checkbox" id="fInvoiceGstApplicable" style="width:auto;">
-          Apply GST to this invoice
-        </label>
-        <div class="modal-sub" style="margin:4px 0 0;">SVM EdTech isn't GST-registered yet — leave this off until you are.</div>
-      </div>
-      <div class="grid-2" id="invoiceGstFields" style="display:none;">
-        <div class="field">
-          <label for="fInvoiceGstin">GSTIN</label>
-          <input type="text" id="fInvoiceGstin" placeholder="e.g. 22AAAAA0000A1Z5">
-        </div>
-        <div class="field">
-          <label for="fInvoiceGstRate">GST Rate (%)</label>
-          <input type="number" id="fInvoiceGstRate" min="0" max="28" step="0.01" placeholder="e.g. 18">
-        </div>
-      </div>
-      <div class="field" id="invoiceTotalRow" style="display:none;">
-        <label>Total (incl. GST)</label>
-        <div id="invoiceTotalDisplay" style="font-weight:600; font-size:1.05em;">₹0.00</div>
-      </div>
-      <div class="field">
-        <label for="fInvoiceNotes">Notes</label>
-        <textarea id="fInvoiceNotes"></textarea>
-      </div>
-      <div class="modal-error" id="invoiceModalError"></div>
-      <div class="modal-actions">
-        <div>
-          <button type="button" class="btn btn-danger" id="btnDeleteInvoice" style="display:none;">Delete</button>
-        </div>
-        <div class="right">
-          <button type="button" class="btn btn-light" id="btnCancelInvoice">Cancel</button>
-          <button type="submit" class="btn btn-accent" id="btnSaveInvoice">Save</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
-
 <!-- Add / Edit Expense Modal -->
 <div class="modal-overlay" id="expenseModalOverlay">
   <div class="modal">
@@ -1150,11 +1105,11 @@ async function loadAll() {
   renderLeadsTable();
   updateSupportCountPill(summary.openQueries);
   updateLeadsCountPill(summary.newLeads);
+  try { [quotesCache, paymentsCache] = await Promise.all([api('/api/quotes'), api('/api/payments')]); renderQuotesTable(); renderReceiptsTable(); renderInvoicesTable(); fillRenewSelect(); } catch (e) {}
 }
 
 function populateSchoolSelects() {
   const opts = schoolsCache.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  $('#fInvoiceSchool').innerHTML = opts;
   $('#fQuerySchool').innerHTML = opts;
   const filterOpts = '<option value="">All schools</option>' + opts;
   const curInvSchool = $('#fltInvoiceSchool').value;
@@ -1474,6 +1429,7 @@ function renderSchoolsTable(schools) {
               <div class="school-name" style="${isSub ? 'padding-left:20px;' : ''}">${isSub ? '↳ ' : ''}${esc(s.name)}${s.accessSuspended ? ' <span class="badge" style="background:#fde8ee; color:#a80d5d;">Access Suspended</span>' : ''}</div>
               ${isSub ? `<div class="school-notes" style="padding-left:20px;">Branch of ${esc(schoolName(s.parentSchoolId))}</div>` : ''}
               ${s.planType ? `<div class="school-notes" style="${isSub ? 'padding-left:20px;' : ''}">${esc(PLAN_TYPE_LABELS[s.planType] || s.planType)}${s.planType === 'erp_selected_modules' && s.planModules && s.planModules.length ? ' · ' + s.planModules.map(m => esc(PLAN_MODULE_LABELS[m] || m)).join(', ') : ''}</div>` : ''}
+              ${s.planValidUntil ? `<div class="school-notes" style="${isSub ? 'padding-left:20px;' : ''}">Plan valid until ${dfmt(s.planValidUntil)}${s.planValidUntil < new Date().toISOString().slice(0, 10) ? ' <b style="color:var(--bad);">(lapsed)</b>' : ''}</div>` : ''}
               ${s.notes ? `<div class="school-notes" style="${isSub ? 'padding-left:20px;' : ''}">${esc(s.notes)}</div>` : ''}
             </td>
             <td><span class="badge badge-${s.status}">${s.status === 'permanent' ? 'Permanent' : 'Temporary'}</span></td>
@@ -1486,6 +1442,8 @@ function renderSchoolsTable(schools) {
             <td>
               <div class="row-actions">
                 <button class="btn btn-light btn-sm" data-action="edit" data-id="${s.id}">Edit</button>
+                ${s.billingCycle !== 'monthly' ? `<button class="btn btn-accent btn-sm" data-action="renew" data-id="${s.id}">Generate renewal</button>` : ''}
+                <button class="btn btn-light btn-sm" data-action="bill-info" data-id="${s.id}">Billing info</button>
                 <button class="btn btn-light btn-sm" data-action="errors" data-id="${s.id}">Errors</button>
                 ${s.erpUrl ? `<button class="btn btn-light btn-sm" data-action="support-login" data-id="${s.id}">Support Login</button>` : ''}
                 <button class="btn btn-light btn-sm" data-action="deploys" data-id="${s.id}">Deploys</button>
@@ -1501,6 +1459,8 @@ function renderSchoolsTable(schools) {
   wrap.querySelectorAll('[data-action="edit"]').forEach(btn => {
     btn.addEventListener('click', () => openEditModal(btn.dataset.id));
   });
+  wrap.querySelectorAll('[data-action="renew"]').forEach(btn => btn.addEventListener('click', () => generateRenewal(btn.dataset.id)));
+  wrap.querySelectorAll('[data-action="bill-info"]').forEach(btn => btn.addEventListener('click', () => openSchoolBilling(btn.dataset.id)));
   wrap.querySelectorAll('[data-action="errors"]').forEach(btn => {
     btn.addEventListener('click', () => openErrorsModal(btn.dataset.id));
   });
@@ -2160,192 +2120,6 @@ async function openErrorsModal(id) {
 }
 $('#btnCloseErrors').addEventListener('click', () => $('#errorModalOverlay').classList.remove('open'));
 
-/* ---------- Billing: invoices table + filters ---------- */
-function filteredInvoices() {
-  const schoolId = $('#fltInvoiceSchool').value;
-  const status = $('#fltInvoiceStatus').value;
-  return invoicesCache.filter(i => (!schoolId || i.schoolId === schoolId) && (!status || i.effectiveStatus === status));
-}
-
-
-// Printable invoice (opens a clean page; use the browser's Print / Save as PDF).
-function printInvoice(id) {
-  const inv = (invoicesCache || []).find(x => String(x.id) === String(id));
-  if (!inv) return;
-  const sc = (schoolsCache || []).find(s => String(s.id) === String(inv.schoolId)) || {};
-  const s = settingsCache || {};
-  const money = v => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const dt = v => v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-  const nl = v => esc(v || '').replace(/\n/g, '<br>');
-  const total = inv.totalAmount != null ? inv.totalAmount : inv.amount;
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to print the invoice.'); return; }
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${esc(inv.invoiceNumber || '')}</title>
-<style>body{font:14px/1.5 Inter,Arial,sans-serif;color:#14182B;margin:0;padding:32px;max-width:760px;margin:auto}
-h1{font:700 26px Georgia,serif;color:#1F2A6B;margin:0}.top{display:flex;justify-content:space-between;border-bottom:3px solid #A85F0B;padding-bottom:14px;margin-bottom:20px}
-.muted{color:#5A5F77;font-size:12px}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px 8px;border-bottom:1px solid #D9D3C4;text-align:left}th{background:#E8EAF6;font-size:12px;text-transform:uppercase}
-.r{text-align:right}.tot td{font-weight:700;border-top:2px solid #1F2A6B}.box{background:#FBF8F2;border:1px solid #D9D3C4;border-radius:8px;padding:12px 14px;margin-top:16px}
-.bar{margin-bottom:16px}@media print{.bar{display:none}body{padding:0}}</style></head><body>
-<div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>
-<div class="top"><div><h1>${esc(s.companyName || 'SVM EdTech')}</h1><div class="muted">${nl(s.companyAddress || 'Andhra Pradesh, India')}<br>${esc(s.contactEmail || '')} ${esc(s.contactPhone || '')}</div></div>
-<div class="r"><h1 style="font-size:20px">INVOICE</h1><div class="muted">No: <b>${esc(inv.invoiceNumber || '-')}</b><br>Date: ${dt(inv.createdAt)}<br>Due: ${dt(inv.dueDate)}<br>Status: ${esc(titleCase(inv.effectiveStatus || inv.status))}</div></div></div>
-<div><div class="muted">Billed to</div><b>${esc(sc.name || schoolName(inv.schoolId))}</b>${inv.gstin ? `<br><span class="muted">GSTIN: ${esc(inv.gstin)}</span>` : ''}</div>
-<table><thead><tr><th>Description</th><th class="r">Amount</th></tr></thead><tbody>
-<tr><td>${esc(inv.description || 'School ERP service')}${inv.billingPeriod ? `<div class="muted">Period: ${esc(inv.billingPeriod)}</div>` : ''}</td><td class="r">${money(inv.amount)}</td></tr>
-${inv.gstApplicable ? `<tr><td>GST @ ${esc(inv.gstRate)}%</td><td class="r">${money(inv.gstAmount)}</td></tr>` : ''}
-<tr class="tot"><td>Total</td><td class="r">${money(total)}</td></tr></tbody></table>
-${s.paymentDetails ? `<div class="box"><b>How to pay</b><br>${nl(s.paymentDetails)}</div>` : ''}
-${inv.notes ? `<div class="muted" style="margin-top:12px">${nl(inv.notes)}</div>` : ''}
-<p class="muted" style="margin-top:28px">Thank you for choosing ${esc(s.companyName || 'SVM EdTech')}. This is a computer-generated invoice.</p></body></html>`);
-  w.document.close();
-}
-
-function renderInvoicesTable() {
-  const wrap = $('#invoicesTableWrap');
-  const rows = filteredInvoices();
-  if (!rows.length) {
-    wrap.innerHTML = '<div class="empty-state">No invoices match these filters.</div>';
-    return;
-  }
-  wrap.innerHTML = `
-    <table>
-      <thead><tr><th>Invoice #</th><th>School</th><th>Description</th><th>Amount</th><th>Status</th><th>Due Date</th><th>Actions</th></tr></thead>
-      <tbody>
-        ${rows.map(i => `
-          <tr>
-            <td style="font-variant-numeric:tabular-nums; color:var(--ink-soft);">${esc(i.invoiceNumber || '—')}</td>
-            <td class="school-name">${esc(schoolName(i.schoolId))}</td>
-            <td>${esc(i.description || '—')}</td>
-            <td class="billing-amount">${fmtMoney(i.totalAmount != null ? i.totalAmount : i.amount)}${i.gstApplicable ? ' <span style="font-size:0.78em; color:var(--ink-soft);">(incl. GST)</span>' : ''}</td>
-            <td><span class="badge badge-${i.effectiveStatus}">${titleCase(i.effectiveStatus)}</span></td>
-            <td>${i.dueDate ? new Date(i.dueDate).toLocaleDateString() : '—'}</td>
-            <td>
-              <div class="row-actions">
-                ${i.status === 'pending' ? `<button class="btn btn-light btn-sm" data-action="mark-paid" data-id="${i.id}">Mark Paid</button>` : ''}
-                <button class="btn btn-light btn-sm" data-action="print-invoice" data-id="${i.id}">Print</button>
-                <button class="btn btn-light btn-sm" data-action="edit-invoice" data-id="${i.id}">Edit</button>
-              </div>
-            </td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-  wrap.querySelectorAll('[data-action="print-invoice"]').forEach(btn => btn.addEventListener('click', () => printInvoice(btn.dataset.id)));
-  wrap.querySelectorAll('[data-action="edit-invoice"]').forEach(btn => btn.addEventListener('click', () => openEditInvoiceModal(btn.dataset.id)));
-  wrap.querySelectorAll('[data-action="mark-paid"]').forEach(btn => btn.addEventListener('click', () => markInvoicePaid(btn.dataset.id)));
-}
-
-async function markInvoicePaid(id) {
-  try {
-    await api('/api/invoices/' + id, { method: 'PUT', body: { status: 'paid' } });
-    showToast('Invoice marked as paid.');
-    await loadAll();
-  } catch (err) {
-    showToast('Could not update invoice: ' + err.message);
-  }
-}
-
-$('#fltInvoiceSchool').addEventListener('change', renderInvoicesTable);
-$('#fltInvoiceStatus').addEventListener('change', renderInvoicesTable);
-
-/* ---------- Billing: add / edit invoice modal ---------- */
-let editingInvoiceId = null;
-
-function updateInvoiceGstUi() {
-  const on = $('#fInvoiceGstApplicable').checked;
-  $('#invoiceGstFields').style.display = on ? 'grid' : 'none';
-  $('#invoiceTotalRow').style.display = on ? 'block' : 'none';
-  const amount = Number($('#fInvoiceAmount').value) || 0;
-  const rate = Number($('#fInvoiceGstRate').value) || 0;
-  const total = on ? amount + Math.round(amount * (rate / 100) * 100) / 100 : amount;
-  $('#invoiceTotalDisplay').textContent = fmtMoney(Math.round(total * 100) / 100);
-}
-['#fInvoiceGstApplicable', '#fInvoiceGstRate', '#fInvoiceAmount'].forEach(sel => {
-  $(sel).addEventListener('input', updateInvoiceGstUi);
-  $(sel).addEventListener('change', updateInvoiceGstUi);
-});
-
-function openAddInvoiceModal() {
-  editingInvoiceId = null;
-  $('#invoiceModalTitle').textContent = 'Add Invoice';
-  $('#invoiceForm').reset();
-  populateSchoolSelects();
-  if (schoolsCache.length) $('#fInvoiceSchool').value = schoolsCache[0].id;
-  $('#btnDeleteInvoice').style.display = 'none';
-  $('#invoiceModalError').style.display = 'none';
-  updateInvoiceGstUi();
-  $('#invoiceModalOverlay').classList.add('open');
-}
-
-function openEditInvoiceModal(id) {
-  const inv = invoicesCache.find(x => x.id === id);
-  if (!inv) return;
-  editingInvoiceId = id;
-  $('#invoiceModalTitle').textContent = 'Edit Invoice — ' + (inv.invoiceNumber || '');
-  $('#fInvoiceSchool').value = inv.schoolId;
-  $('#fInvoiceDescription').value = inv.description || '';
-  $('#fInvoiceAmount').value = inv.amount;
-  $('#fInvoiceDueDate').value = inv.dueDate ? String(inv.dueDate).slice(0, 10) : '';
-  $('#fInvoiceStatus').value = inv.status;
-  $('#fInvoiceNotes').value = inv.notes || '';
-  $('#fInvoiceGstApplicable').checked = !!inv.gstApplicable;
-  $('#fInvoiceGstin').value = inv.gstin || '';
-  $('#fInvoiceGstRate').value = inv.gstRate != null ? inv.gstRate : '';
-  $('#btnDeleteInvoice').style.display = 'inline-block';
-  $('#invoiceModalError').style.display = 'none';
-  updateInvoiceGstUi();
-  $('#invoiceModalOverlay').classList.add('open');
-}
-
-$('#btnAddInvoice').addEventListener('click', openAddInvoiceModal);
-$('#btnCancelInvoice').addEventListener('click', () => $('#invoiceModalOverlay').classList.remove('open'));
-
-$('#invoiceForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const errEl = $('#invoiceModalError');
-  errEl.style.display = 'none';
-  const gstApplicable = $('#fInvoiceGstApplicable').checked;
-  const payload = {
-    schoolId: $('#fInvoiceSchool').value,
-    description: $('#fInvoiceDescription').value,
-    amount: $('#fInvoiceAmount').value,
-    dueDate: $('#fInvoiceDueDate').value || null,
-    status: $('#fInvoiceStatus').value,
-    notes: $('#fInvoiceNotes').value,
-    gstApplicable,
-    gstin: gstApplicable ? $('#fInvoiceGstin').value : null,
-    gstRate: gstApplicable ? ($('#fInvoiceGstRate').value || null) : null,
-  };
-  try {
-    if (editingInvoiceId) {
-      await api('/api/invoices/' + editingInvoiceId, { method: 'PUT', body: payload });
-      showToast('Invoice updated.');
-    } else {
-      await api('/api/invoices', { method: 'POST', body: payload });
-      showToast('Invoice added.');
-    }
-    $('#invoiceModalOverlay').classList.remove('open');
-    await loadAll();
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.style.display = 'block';
-  }
-});
-
-$('#btnDeleteInvoice').addEventListener('click', async () => {
-  if (!editingInvoiceId) return;
-  if (!confirm('Delete this invoice? This cannot be undone.')) return;
-  try {
-    await api('/api/invoices/' + editingInvoiceId, { method: 'DELETE' });
-    showToast('Invoice deleted.');
-    $('#invoiceModalOverlay').classList.remove('open');
-    await loadAll();
-  } catch (err) {
-    showToast('Could not delete: ' + err.message);
-  }
-});
-
 /* ---------- Billing: generate recurring invoices ---------- */
 $('#btnGenerateInvoices').addEventListener('click', async () => {
   const period = new Date().toISOString().slice(0, 7);
@@ -2658,6 +2432,618 @@ $('#btnDeleteQuery').addEventListener('click', async () => {
   } catch (err) {
     showToast('Could not delete: ' + err.message);
   }
+});
+
+/* ================= Billing suite: pricing, quotations, invoices with lines, payments + receipts, renewals ================= */
+let quotesCache = [];
+let paymentsCache = [];
+const PAY_MODE_LABELS = { upi: 'UPI', bank_transfer: 'Bank transfer', cash: 'Cash', cheque: 'Cheque', other: 'Other' };
+const QUOTE_STATUS_LABELS = { draft: 'Draft', sent: 'Sent', accepted: 'Accepted', declined: 'Declined', expired: 'Expired' };
+const dstr = v => (v ? String(v).slice(0, 10) : '');
+const dfmt = v => { const s = dstr(v); if (!s) return '—'; const d = new Date(s + 'T00:00:00Z'); return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }); };
+const money2 = v => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const r2c = n => Math.round((Number(n) || 0) * 100) / 100;
+const cfgNow = () => (settingsCache && settingsCache.billingConfig) || { moduleYearly: {}, setupFees: {}, gstEnabled: false, gstRate: 18, dueDays: 15, quoteValidityDays: 15 };
+
+/* ---- shared helpers ---- */
+function calcTotals(lines, discount, gstOn, gstRate) {
+  const subtotal = r2c(lines.reduce((s, l) => s + r2c((Number(l.qty) || 0) * (Number(l.rate) || 0)), 0));
+  const disc = Math.min(subtotal, Math.max(0, r2c(discount)));
+  const taxable = r2c(subtotal - disc);
+  const gst = gstOn ? r2c(taxable * (Number(gstRate) || 0) / 100) : 0;
+  return { subtotal, discount: disc, taxable, gstAmount: gst, total: r2c(taxable + gst) };
+}
+
+// A small editable table of lines (description, qty, rate). Returns { get(), set(lines) }.
+function makeLinesEditor(host, onChange) {
+  let lines = [];
+  function draw() {
+    host.innerHTML = `
+      <table style="width:100%; font-size:0.82rem;">
+        <thead><tr><th style="text-align:left;">Item</th><th style="width:76px;">Qty</th><th style="width:110px;">Rate (₹)</th><th style="width:100px; text-align:right;">Amount</th><th style="width:30px;"></th></tr></thead>
+        <tbody>${lines.map((l, i) => `
+          <tr data-i="${i}">
+            <td><input type="text" class="le-desc" value="${esc(l.description || '')}" style="width:100%;"></td>
+            <td><input type="number" class="le-qty" min="0.01" step="0.01" value="${esc(l.qty)}" style="width:100%;"></td>
+            <td><input type="number" class="le-rate" min="0" step="0.01" value="${esc(l.rate)}" style="width:100%;"></td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">${money2((Number(l.qty) || 0) * (Number(l.rate) || 0))}</td>
+            <td><button type="button" class="btn btn-light btn-sm le-del" title="Remove">✕</button></td>
+          </tr>`).join('') || '<tr><td colspan="5" class="modal-sub" style="padding:10px 0;">No items yet. Use "Fill from price list" or "+ Add item".</td></tr>'}
+        </tbody>
+      </table>`;
+    host.querySelectorAll('tr[data-i]').forEach(tr => {
+      const i = Number(tr.dataset.i);
+      tr.querySelector('.le-desc').addEventListener('input', e => { lines[i].description = e.target.value; onChange && onChange(); });
+      tr.querySelector('.le-qty').addEventListener('change', e => { lines[i].qty = e.target.value; draw(); onChange && onChange(); });
+      tr.querySelector('.le-rate').addEventListener('change', e => { lines[i].rate = e.target.value; draw(); onChange && onChange(); });
+      tr.querySelector('.le-del').addEventListener('click', () => { lines.splice(i, 1); draw(); onChange && onChange(); });
+    });
+  }
+  draw();
+  return {
+    get: () => lines.map(l => ({ kind: l.kind || 'other', module: l.module, description: l.description, qty: Number(l.qty) || 1, rate: Number(l.rate) || 0 })),
+    set: ls => { lines = (ls || []).map(l => ({ ...l })); draw(); onChange && onChange(); },
+    add: l => { lines.push(l); draw(); onChange && onChange(); },
+  };
+}
+
+// Creates a modal once and returns its overlay element.
+function makeModal(id, html, wide) {
+  let ov = document.getElementById(id);
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.className = 'modal-overlay'; ov.id = id;
+    ov.innerHTML = `<div class="modal" style="${wide ? 'width:min(760px,100%);' : ''}">${html}</div>`;
+    document.body.appendChild(ov);
+  }
+  return ov;
+}
+const openM = id => document.getElementById(id).classList.add('open');
+const closeM = id => document.getElementById(id).classList.remove('open');
+function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
+
+async function refreshBilling() {
+  const [summary, invoices, quotes, payments, schools, settings] = await Promise.all([
+    api('/api/billing/summary'), api('/api/invoices'), api('/api/quotes'), api('/api/payments'), api('/api/schools'), api('/api/settings'),
+  ]);
+  invoicesCache = invoices; quotesCache = quotes; paymentsCache = payments; schoolsCache = schools; settingsCache = settings;
+  renderBillingCards(summary);
+  renderSchoolsTable(schools);
+  populateSchoolSelects();
+  renderInvoicesTable();
+  renderQuotesTable();
+  renderReceiptsTable();
+  fillRenewSelect();
+}
+
+/* ---- printable documents ---- */
+function docShell(title, kindLabel, metaHtml, bodyHtml) {
+  const s = settingsCache || {}, c = cfgNow();
+  const ids = [c.gstEnabled && c.gstin ? 'GSTIN: ' + esc(c.gstin) : '', c.pan ? 'PAN: ' + esc(c.pan) : ''].filter(Boolean).join(' &nbsp; ');
+  const nl = v => esc(v || '').replace(/\n/g, '<br>');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>body{font:14px/1.5 Inter,Arial,sans-serif;color:#14182B;margin:0;padding:32px;max-width:780px;margin:auto}
+h1{font:700 26px Georgia,serif;color:#1F2A6B;margin:0}.top{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #A85F0B;padding-bottom:14px;margin-bottom:20px}
+.muted{color:#5A5F77;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{padding:8px;border-bottom:1px solid #D9D3C4;text-align:left;vertical-align:top}th{background:#E8EAF6;font-size:12px;text-transform:uppercase}
+.r{text-align:right}.tot td{font-weight:700;border-top:2px solid #1F2A6B}.box{background:#FBF8F2;border:1px solid #D9D3C4;border-radius:8px;padding:12px 14px;margin-top:14px}
+.big{font:700 22px Georgia,serif;color:#1F2A6B}.sig{margin-top:50px;text-align:right}.sig div{display:inline-block;border-top:1px solid #14182B;padding-top:4px;min-width:180px;text-align:center}
+.bar{margin-bottom:16px}.stamp{display:inline-block;border:2px solid #1b8a5a;color:#1b8a5a;font-weight:700;padding:2px 12px;border-radius:6px;letter-spacing:1px}
+@media print{.bar{display:none}body{padding:0}}</style></head><body>
+<div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>
+<div class="top"><div><h1>${esc(s.companyName || 'SVM EdTech')}</h1><div class="muted">${nl(s.companyAddress || 'Andhra Pradesh, India')}<br>${esc(s.contactEmail || '')} ${esc(s.contactPhone || '')}${ids ? '<br>' + ids : ''}</div></div>
+<div class="r"><h1 style="font-size:20px">${kindLabel}</h1><div class="muted">${metaHtml}</div></div></div>
+${bodyHtml}
+<p class="muted" style="margin-top:28px">Thank you for choosing ${esc(s.companyName || 'SVM EdTech')}. This is a computer-generated document.</p></body></html>`;
+}
+function openDoc(html) {
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to print.'); return; }
+  w.document.write(html); w.document.close();
+}
+function linesTableHtml(lines, d) {
+  const rows = (lines && lines.length ? lines : [{ description: d.description || 'School ERP service', qty: 1, rate: d.subtotal != null ? d.subtotal : d.amount, amount: d.subtotal != null ? d.subtotal : d.amount }]);
+  return `<table><thead><tr><th>#</th><th>Description</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>
+${rows.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.description)}</td><td class="r">${esc(l.qty)}</td><td class="r">${money2(l.rate)}</td><td class="r">${money2(l.amount != null ? l.amount : l.qty * l.rate)}</td></tr>`).join('')}
+<tr><td colspan="4" class="r">Subtotal</td><td class="r">${money2(d.subtotal != null ? d.subtotal : d.amount)}</td></tr>
+${d.discount > 0 ? `<tr><td colspan="4" class="r">Discount</td><td class="r">− ${money2(d.discount)}</td></tr>` : ''}
+${d.gstApplicable ? `<tr><td colspan="4" class="r">GST @ ${esc(d.gstRate)}% (CGST + SGST, or IGST for another state)</td><td class="r">${money2(d.gstAmount)}</td></tr>` : ''}
+<tr class="tot"><td colspan="4" class="r">Total</td><td class="r">${money2(d.totalAmount)}</td></tr></tbody></table>`;
+}
+function billedToHtml(name, addr, gstin, extra) {
+  return `<div><div class="muted">Billed to</div><b>${esc(name)}</b>${addr ? `<br><span class="muted">${esc(addr).replace(/\n/g, '<br>')}</span>` : ''}${gstin ? `<br><span class="muted">GSTIN: ${esc(gstin)}</span>` : ''}${extra || ''}</div>`;
+}
+
+function printInvoice(id) {
+  const inv = (invoicesCache || []).find(x => String(x.id) === String(id));
+  if (!inv) return;
+  const sc = (schoolsCache || []).find(s => String(s.id) === String(inv.schoolId)) || {};
+  const c = cfgNow();
+  const pays = (paymentsCache || []).filter(p => p.invoiceId === inv.id);
+  const taxLabel = inv.gstApplicable ? 'TAX INVOICE' : 'INVOICE';
+  const meta = `No: <b>${esc(inv.invoiceNumber || '-')}</b><br>Date: ${dfmt(inv.createdAt)}<br>Due: ${dfmt(inv.dueDate)}<br>Status: ${esc(titleCase(inv.effectiveStatus || inv.status))}`;
+  const term = inv.termStart && inv.termEnd ? `<div class="muted">Service period: ${dfmt(inv.termStart)} to ${dfmt(inv.termEnd)}</div>` : '';
+  const body = `${billedToHtml(sc.name || schoolName(inv.schoolId), sc.billingAddress, inv.gstin || sc.schoolGstin, term)}
+${linesTableHtml(inv.lines, inv)}
+<div class="muted">Amount in words: <b>${esc(inv.totalWords || '')}</b></div>
+${pays.length ? `<table><thead><tr><th>Receipt</th><th>Date</th><th>Mode</th><th class="r">Received</th></tr></thead><tbody>${pays.map(p => `<tr><td>${esc(p.receiptNumber)}</td><td>${dfmt(p.paidOn)}</td><td>${esc(PAY_MODE_LABELS[p.mode] || p.mode)}${p.reference ? ' · ' + esc(p.reference) : ''}</td><td class="r">${money2(p.amount)}</td></tr>`).join('')}
+<tr class="tot"><td colspan="3" class="r">Balance due</td><td class="r">${money2(inv.balance)}</td></tr></tbody></table>` : `<div class="box"><b>Balance due: ${money2(inv.balance)}</b></div>`}
+${!inv.gstApplicable ? '<div class="muted">GST is not applicable: the supplier is not registered under GST.</div>' : ''}
+${settingsCache.paymentDetails ? `<div class="box"><b>How to pay</b><br>${esc(settingsCache.paymentDetails).replace(/\n/g, '<br>')}</div>` : ''}
+${inv.notes ? `<div class="muted" style="margin-top:12px">${esc(inv.notes).replace(/\n/g, '<br>')}</div>` : ''}
+${c.terms ? `<div class="muted" style="margin-top:12px"><b>Terms</b><br>${esc(c.terms).replace(/\n/g, '<br>')}</div>` : ''}
+<div class="sig"><div>Authorised signatory</div></div>`;
+  openDoc(docShell('Invoice ' + (inv.invoiceNumber || ''), taxLabel, meta, body));
+}
+
+function printReceipt(paymentId) {
+  const p = (paymentsCache || []).find(x => x.id === paymentId);
+  if (!p) return;
+  const inv = (invoicesCache || []).find(x => x.id === p.invoiceId) || {};
+  const sc = (schoolsCache || []).find(s => s.id === p.schoolId) || {};
+  const paidTill = (paymentsCache || []).filter(x => x.invoiceId === p.invoiceId && (x.paidOn < p.paidOn || (x.paidOn === p.paidOn && x.createdAt <= p.createdAt))).reduce((s, x) => s + x.amount, 0);
+  const balAfter = r2c((inv.totalAmount || 0) - paidTill);
+  const meta = `No: <b>${esc(p.receiptNumber)}</b><br>Date: ${dfmt(p.paidOn)}`;
+  const body = `${billedToHtml(sc.name || schoolName(p.schoolId), sc.billingAddress, sc.schoolGstin).replace('Billed to', 'Received from')}
+<div class="box" style="margin-top:18px"><div class="muted">Amount received</div><div class="big">${money2(p.amount)}</div><div class="muted">${esc(p.amountWords || '')}</div></div>
+<table><tbody>
+<tr><td>Payment mode</td><td class="r">${esc(PAY_MODE_LABELS[p.mode] || p.mode)}${p.reference ? ' · Ref: ' + esc(p.reference) : ''}</td></tr>
+<tr><td>Against invoice</td><td class="r">${esc(inv.invoiceNumber || '')}${inv.description ? ' · ' + esc(inv.description) : ''}</td></tr>
+<tr><td>Invoice total</td><td class="r">${money2(inv.totalAmount)}</td></tr>
+<tr><td>Paid up to this receipt</td><td class="r">${money2(paidTill)}</td></tr>
+<tr class="tot"><td>Balance due after this receipt</td><td class="r">${money2(balAfter)}</td></tr></tbody></table>
+${balAfter <= 0.005 ? '<div><span class="stamp">PAID IN FULL</span></div>' : ''}
+${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}
+<div class="sig"><div>Authorised signatory</div></div>`;
+  openDoc(docShell('Receipt ' + p.receiptNumber, 'PAYMENT RECEIPT', meta, body));
+}
+
+function printQuote(id) {
+  const q = (quotesCache || []).find(x => x.id === id);
+  if (!q) return;
+  const c = cfgNow();
+  const meta = `No: <b>${esc(q.quoteNumber)}</b><br>Date: ${dfmt(q.createdAt)}<br>Valid until: ${dfmt(q.validUntil)}`;
+  const contact = [q.partyContact, q.partyPhone, q.partyEmail].filter(Boolean).map(esc).join(' · ');
+  const body = `${billedToHtml(q.partyName, q.partyAddress, null, contact ? `<br><span class="muted">${contact}</span>` : '').replace('Billed to', 'Quotation for')}
+${linesTableHtml(q.lines, { ...q, amount: q.subtotal })}
+<div class="muted">Amount in words: <b>${esc(numWords(q.totalAmount))}</b></div>
+<div class="muted" style="margin-top:8px">Setup is charged once. The yearly subscription is charged each year to keep the service running. ${q.gstApplicable ? '' : 'GST is not applicable.'}</div>
+${settingsCache.paymentDetails ? `<div class="box"><b>How to pay</b><br>${esc(settingsCache.paymentDetails).replace(/\n/g, '<br>')}</div>` : ''}
+${q.notes ? `<div class="muted" style="margin-top:12px">${esc(q.notes).replace(/\n/g, '<br>')}</div>` : ''}
+${c.terms ? `<div class="muted" style="margin-top:12px"><b>Terms</b><br>${esc(c.terms).replace(/\n/g, '<br>')}</div>` : ''}
+<div class="sig"><div>Authorised signatory</div></div>`;
+  openDoc(docShell('Quotation ' + q.quoteNumber, 'QUOTATION', meta, body));
+}
+function numWords(n) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = x => x < 20 ? ones[x] : tens[Math.floor(x / 10)] + (x % 10 ? ' ' + ones[x % 10] : '');
+  const three = x => (x >= 100 ? ones[Math.floor(x / 100)] + ' Hundred' + (x % 100 ? ' ' : '') : '') + (x % 100 ? two(x % 100) : '');
+  let v = Math.floor(Number(n) || 0); const paise = Math.round(((Number(n) || 0) - v) * 100);
+  if (!v && !paise) return 'Zero Rupees Only';
+  const parts = []; const cr = Math.floor(v / 1e7); v %= 1e7; const lk = Math.floor(v / 1e5); v %= 1e5; const th = Math.floor(v / 1e3); v %= 1e3;
+  if (cr) parts.push(three(cr) + ' Crore'); if (lk) parts.push(two(lk) + ' Lakh'); if (th) parts.push(two(th) + ' Thousand'); if (v) parts.push(three(v));
+  return parts.join(' ') + ' Rupees' + (paise ? ' and ' + two(paise) + ' Paise' : '') + ' Only';
+}
+
+/* ---- Billing tab: invoices table with payments ---- */
+function renderInvoicesTable() {
+  const wrap = $('#invoicesTableWrap');
+  const schoolId = $('#fltInvoiceSchool').value, status = $('#fltInvoiceStatus').value;
+  const rows = (invoicesCache || []).filter(i => (!schoolId || i.schoolId === schoolId) && (!status || i.effectiveStatus === status));
+  if (!rows.length) { wrap.innerHTML = '<div class="empty-state">No invoices match these filters.</div>'; return; }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Invoice #</th><th>School</th><th>Description</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead>
+      <tbody>${rows.map(i => `
+        <tr>
+          <td style="font-variant-numeric:tabular-nums; color:var(--ink-soft);">${esc(i.invoiceNumber || '—')}</td>
+          <td class="school-name">${esc(schoolName(i.schoolId))}</td>
+          <td>${esc(i.description || '—')}${i.termStart ? `<div class="school-notes">${dfmt(i.termStart)} to ${dfmt(i.termEnd)}</div>` : ''}</td>
+          <td class="billing-amount">${money2(i.totalAmount)}${i.gstApplicable ? ' <span style="font-size:0.78em; color:var(--ink-soft);">(incl. GST)</span>' : ''}</td>
+          <td>${money2(i.paidAmount)}</td>
+          <td><b>${money2(i.balance)}</b></td>
+          <td><span class="badge badge-${i.effectiveStatus}">${titleCase(i.effectiveStatus)}</span></td>
+          <td>${dfmt(i.dueDate)}</td>
+          <td><div class="row-actions">
+            ${i.status !== 'cancelled' && i.balance > 0 ? `<button class="btn btn-accent btn-sm" data-act="pay" data-id="${i.id}">Record payment</button>` : ''}
+            ${i.paidAmount > 0 ? `<button class="btn btn-light btn-sm" data-act="pay" data-id="${i.id}">Receipts</button>` : ''}
+            <button class="btn btn-light btn-sm" data-act="print" data-id="${i.id}">Print</button>
+            <button class="btn btn-light btn-sm" data-act="edit" data-id="${i.id}">Edit</button>
+          </div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  wrap.querySelectorAll('[data-act="print"]').forEach(b => b.addEventListener('click', () => printInvoice(b.dataset.id)));
+  wrap.querySelectorAll('[data-act="edit"]').forEach(b => b.addEventListener('click', () => openEditInvoiceModal(b.dataset.id)));
+  wrap.querySelectorAll('[data-act="pay"]').forEach(b => b.addEventListener('click', () => openPaymentsModal(b.dataset.id)));
+}
+$('#fltInvoiceSchool').addEventListener('change', renderInvoicesTable);
+$('#fltInvoiceStatus').addEventListener('change', renderInvoicesTable);
+
+function renderReceiptsTable() {
+  const wrap = $('#receiptsTableWrap');
+  if (!wrap) return;
+  if (!paymentsCache.length) { wrap.innerHTML = '<div class="empty-state">No payments recorded yet. Use "Record payment" on an invoice and a numbered receipt appears here.</div>'; return; }
+  const invNo = id => { const i = invoicesCache.find(x => x.id === id); return i ? i.invoiceNumber : '—'; };
+  wrap.innerHTML = `<table><thead><tr><th>Receipt #</th><th>Date</th><th>School</th><th>Invoice</th><th>Mode</th><th>Reference</th><th>Amount</th><th></th></tr></thead><tbody>
+    ${paymentsCache.map(p => `<tr><td style="font-variant-numeric:tabular-nums;">${esc(p.receiptNumber)}</td><td>${dfmt(p.paidOn)}</td><td class="school-name">${esc(schoolName(p.schoolId))}</td><td>${esc(invNo(p.invoiceId))}</td><td>${esc(PAY_MODE_LABELS[p.mode] || p.mode)}</td><td>${esc(p.reference || '—')}</td><td class="billing-amount">${money2(p.amount)}</td><td><button class="btn btn-light btn-sm" data-rc="${p.id}">Print receipt</button></td></tr>`).join('')}
+  </tbody></table>`;
+  wrap.querySelectorAll('[data-rc]').forEach(b => b.addEventListener('click', () => printReceipt(b.dataset.rc)));
+}
+
+/* ---- Invoice modal (with items) ---- */
+makeModal('invModalOv', `
+  <h3 id="invM_title">Add Invoice</h3>
+  <div class="modal-sub">Items, discount and GST are added up for you. Payments are recorded separately, each with its own receipt.</div>
+  <div class="grid-2">
+    <div class="field"><label>School</label><select id="invM_school"></select></div>
+    <div class="field"><label>Due date</label><input type="date" id="invM_due"></div>
+  </div>
+  <div class="field"><label>Description</label><input type="text" id="invM_desc" placeholder="e.g. Yearly renewal 2027-28"></div>
+  <div id="invM_lines"></div>
+  <div style="display:flex; gap:8px; margin:8px 0 14px; flex-wrap:wrap;">
+    <button type="button" class="btn btn-light btn-sm" id="invM_add">+ Add item</button>
+    <button type="button" class="btn btn-light btn-sm" id="invM_fill">Fill from price list</button>
+  </div>
+  <div class="grid-2">
+    <div class="field"><label>Discount (₹)</label><input type="number" id="invM_disc" min="0" step="0.01" value="0"></div>
+    <div class="field"><label>Service period (yearly items)</label><div style="display:flex; gap:6px;"><input type="date" id="invM_ts"><input type="date" id="invM_te"></div></div>
+  </div>
+  <div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="invM_gst" style="width:auto;"> Charge GST on this invoice</label>
+    <div id="invM_gstrow" class="grid-2" style="margin-top:8px; display:none;"><input type="number" id="invM_rate" min="0" max="28" step="0.01" placeholder="GST %"><input type="text" id="invM_gstin" placeholder="School GSTIN (optional)"></div></div>
+  <div class="box" id="invM_tot" style="background:#F5F5FB; border-radius:8px; padding:10px 12px; font-size:0.85rem;"></div>
+  <div class="field" style="margin-top:12px;"><label>Notes</label><textarea id="invM_notes"></textarea></div>
+  <div class="modal-error" id="invM_err"></div>
+  <div class="modal-actions"><div style="display:flex; gap:8px;">
+      <button type="button" class="btn btn-danger" id="invM_del" style="display:none;">Delete</button>
+      <button type="button" class="btn btn-light" id="invM_cancelInv" style="display:none;">Cancel invoice</button></div>
+    <div class="right"><button type="button" class="btn btn-light" id="invM_close">Close</button><button type="button" class="btn btn-accent" id="invM_save">Save</button></div></div>`, true);
+let editingInv = null;
+const invEditor = makeLinesEditor($('#invM_lines'), () => invTotals());
+function invTotals() {
+  const t = calcTotals(invEditor.get(), $('#invM_disc').value, $('#invM_gst').checked, $('#invM_rate').value);
+  $('#invM_gstrow').style.display = $('#invM_gst').checked ? 'grid' : 'none';
+  $('#invM_tot').innerHTML = `Subtotal ${money2(t.subtotal)}${t.discount ? ' · Discount − ' + money2(t.discount) : ''}${$('#invM_gst').checked ? ' · GST ' + money2(t.gstAmount) : ''} &nbsp;→&nbsp; <b>Total ${money2(t.total)}</b>`
+    + (editingInv ? ` <span class="school-notes">· Paid ${money2(editingInv.paidAmount)} · Balance ${money2(Math.max(0, t.total - editingInv.paidAmount))}</span>` : '');
+}
+['invM_disc', 'invM_gst', 'invM_rate'].forEach(id => { $('#' + id).addEventListener('input', invTotals); $('#' + id).addEventListener('change', invTotals); });
+function openInvoiceModal(inv) {
+  editingInv = inv || null;
+  const c = cfgNow();
+  $('#invM_title').textContent = inv ? 'Edit Invoice — ' + (inv.invoiceNumber || '') : 'Add Invoice';
+  $('#invM_school').innerHTML = (schoolsCache || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if (inv) $('#invM_school').value = inv.schoolId;
+  $('#invM_school').disabled = !!inv;
+  $('#invM_desc').value = inv ? inv.description || '' : '';
+  $('#invM_due').value = inv ? dstr(inv.dueDate) : '';
+  $('#invM_disc').value = inv ? inv.discount : 0;
+  $('#invM_ts').value = inv ? dstr(inv.termStart) : ''; $('#invM_te').value = inv ? dstr(inv.termEnd) : '';
+  $('#invM_gst').checked = inv ? inv.gstApplicable : !!c.gstEnabled;
+  $('#invM_rate').value = inv ? (inv.gstRate != null ? inv.gstRate : c.gstRate) : c.gstRate;
+  $('#invM_gstin').value = inv ? inv.gstin || '' : '';
+  $('#invM_notes').value = inv ? inv.notes || '' : '';
+  invEditor.set(inv ? (inv.lines && inv.lines.length ? inv.lines : [{ kind: 'other', description: inv.description || 'School ERP service', qty: 1, rate: inv.subtotal != null ? inv.subtotal : inv.amount }]) : []);
+  $('#invM_del').style.display = inv ? 'inline-block' : 'none';
+  $('#invM_cancelInv').style.display = inv && inv.status !== 'cancelled' ? 'inline-block' : 'none';
+  $('#invM_err').style.display = 'none';
+  invTotals();
+  openM('invModalOv');
+}
+function openEditInvoiceModal(id) { const i = invoicesCache.find(x => x.id === id); if (i) openInvoiceModal(i); }
+$('#btnAddInvoice').addEventListener('click', () => openInvoiceModal(null));
+$('#invM_close').addEventListener('click', () => closeM('invModalOv'));
+$('#invM_add').addEventListener('click', () => invEditor.add({ kind: 'other', description: '', qty: 1, rate: 0 }));
+$('#invM_fill').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId: $('#invM_school').value, includeSetup: confirm('Include the one-time setup fee?\n\nOK = setup + yearly subscription (new school)\nCancel = yearly subscription only (renewal)') } });
+    invEditor.set(r.lines);
+    if (r.missing.length) showErr($('#invM_err'), 'Prices not set in Pricing & GST for: ' + r.missing.join(', ') + '. Those items are at ₹0.');
+    else $('#invM_err').style.display = 'none';
+  } catch (e) { showErr($('#invM_err'), e.message); }
+});
+function invPayload() {
+  const on = $('#invM_gst').checked;
+  return {
+    schoolId: $('#invM_school').value, description: $('#invM_desc').value, dueDate: $('#invM_due').value || null,
+    lines: invEditor.get(), discount: $('#invM_disc').value || 0, gstApplicable: on, gstRate: on ? $('#invM_rate').value : null,
+    gstin: $('#invM_gstin').value || null, notes: $('#invM_notes').value,
+    termStart: $('#invM_ts').value || undefined, termEnd: $('#invM_te').value || undefined,
+  };
+}
+$('#invM_save').addEventListener('click', async () => {
+  try {
+    const body = invPayload();
+    if (!body.lines.length) throw new Error('Add at least one item.');
+    if (editingInv) await api('/api/invoices/' + editingInv.id, { method: 'PUT', body });
+    else await api('/api/invoices', { method: 'POST', body });
+    closeM('invModalOv'); showToast(editingInv ? 'Invoice updated.' : 'Invoice added.'); await refreshBilling();
+  } catch (e) { showErr($('#invM_err'), e.message); }
+});
+$('#invM_cancelInv').addEventListener('click', async () => {
+  if (!confirm('Cancel this invoice? It will stop counting as money owed.')) return;
+  try { await api('/api/invoices/' + editingInv.id, { method: 'PUT', body: { status: 'cancelled' } }); closeM('invModalOv'); showToast('Invoice cancelled.'); await refreshBilling(); }
+  catch (e) { showErr($('#invM_err'), e.message); }
+});
+$('#invM_del').addEventListener('click', async () => {
+  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  try { await api('/api/invoices/' + editingInv.id, { method: 'DELETE' }); closeM('invModalOv'); showToast('Invoice deleted.'); await refreshBilling(); }
+  catch (e) { showErr($('#invM_err'), e.message); }
+});
+
+/* ---- Payments modal (record + list receipts for an invoice) ---- */
+makeModal('payModalOv', `
+  <h3 id="payM_title">Payments</h3>
+  <div class="modal-sub" id="payM_sub"></div>
+  <div id="payM_list"></div>
+  <div id="payM_form" style="border-top:1px solid #E5E5F0; margin-top:14px; padding-top:14px;">
+    <div class="grid-2">
+      <div class="field"><label>Amount received (₹)</label><input type="number" id="payM_amt" min="0.01" step="0.01"></div>
+      <div class="field"><label>Date received</label><input type="date" id="payM_date"></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label>Mode</label><select id="payM_mode"><option value="upi">UPI</option><option value="bank_transfer">Bank transfer</option><option value="cash">Cash</option><option value="cheque">Cheque</option><option value="other">Other</option></select></div>
+      <div class="field"><label>Reference (UTR / cheque no.)</label><input type="text" id="payM_ref"></div>
+    </div>
+    <div class="field"><label>Note</label><input type="text" id="payM_notes"></div>
+    <div class="modal-error" id="payM_err"></div>
+  </div>
+  <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="payM_close">Close</button><button type="button" class="btn btn-accent" id="payM_save">Save payment &amp; make receipt</button></div></div>`);
+let payInvId = null;
+function drawPayments() {
+  const inv = invoicesCache.find(x => x.id === payInvId); if (!inv) return;
+  const pays = paymentsCache.filter(p => p.invoiceId === inv.id);
+  $('#payM_title').textContent = 'Payments — ' + inv.invoiceNumber;
+  $('#payM_sub').innerHTML = `${esc(schoolName(inv.schoolId))} · Total <b>${money2(inv.totalAmount)}</b> · Paid <b>${money2(inv.paidAmount)}</b> · Balance <b>${money2(inv.balance)}</b>`;
+  $('#payM_list').innerHTML = pays.length ? `<table><thead><tr><th>Receipt</th><th>Date</th><th>Mode</th><th>Amount</th><th></th></tr></thead><tbody>${pays.map(p => `
+    <tr><td>${esc(p.receiptNumber)}</td><td>${dfmt(p.paidOn)}</td><td>${esc(PAY_MODE_LABELS[p.mode] || p.mode)}${p.reference ? '<div class="school-notes">' + esc(p.reference) + '</div>' : ''}</td><td>${money2(p.amount)}</td>
+    <td><div class="row-actions"><button class="btn btn-light btn-sm" data-rc="${p.id}">Print receipt</button><button class="btn btn-light btn-sm" data-dp="${p.id}">Delete</button></div></td></tr>`).join('')}</tbody></table>` : '<div class="modal-sub">No payments yet.</div>';
+  $('#payM_list').querySelectorAll('[data-rc]').forEach(b => b.addEventListener('click', () => printReceipt(b.dataset.rc)));
+  $('#payM_list').querySelectorAll('[data-dp]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this payment and its receipt? The invoice balance goes back up.')) return;
+    try { await api('/api/payments/' + b.dataset.dp, { method: 'DELETE' }); await refreshBilling(); drawPayments(); showToast('Payment deleted.'); }
+    catch (e) { showErr($('#payM_err'), e.message); }
+  }));
+  const open = inv.status !== 'cancelled' && inv.balance > 0;
+  $('#payM_form').style.display = open ? 'block' : 'none';
+  $('#payM_save').style.display = open ? 'inline-block' : 'none';
+  $('#payM_amt').value = inv.balance > 0 ? inv.balance : '';
+  $('#payM_date').value = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  $('#payM_ref').value = ''; $('#payM_notes').value = ''; $('#payM_err').style.display = 'none';
+}
+function openPaymentsModal(invId) { payInvId = invId; drawPayments(); openM('payModalOv'); }
+$('#payM_close').addEventListener('click', () => closeM('payModalOv'));
+$('#payM_save').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/invoices/' + payInvId + '/payments', { method: 'POST', body: { amount: $('#payM_amt').value, paidOn: $('#payM_date').value, mode: $('#payM_mode').value, reference: $('#payM_ref').value, notes: $('#payM_notes').value } });
+    await refreshBilling(); drawPayments();
+    showToast('Payment saved. Receipt ' + r.payment.receiptNumber + ' made.');
+    if (confirm('Receipt ' + r.payment.receiptNumber + ' is ready. Print it now?')) printReceipt(r.payment.id);
+  } catch (e) { showErr($('#payM_err'), e.message); }
+});
+
+/* ---- Pricing & GST modal ---- */
+const PRICE_MODS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications'];
+makeModal('priceModalOv', `
+  <h3>Pricing &amp; GST</h3>
+  <div class="modal-sub">Your price list. Quotations, invoices and renewals fill their prices from here. Leave a price empty if you have not decided it.</div>
+  <h4 style="margin:6px 0;">Packages (per year)</h4>
+  <div class="grid-2"><div class="field"><label>All modules (₹ / year)</label><input type="number" id="pr_all" min="0" step="1"></div>
+  <div class="field"><label>All modules + school website (₹ / year)</label><input type="number" id="pr_allw" min="0" step="1"></div></div>
+  <h4 style="margin:6px 0;">One-time setup fee</h4>
+  <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;"><div class="field"><label>Selected modules</label><input type="number" id="pr_su_sel" min="0"></div>
+  <div class="field"><label>All modules</label><input type="number" id="pr_su_all" min="0"></div>
+  <div class="field"><label>All + website</label><input type="number" id="pr_su_allw" min="0"></div></div>
+  <h4 style="margin:6px 0;">Per module (₹ / year, used for "Selected modules")</h4>
+  <div class="grid-2" id="pr_mods"></div>
+  <h4 style="margin:10px 0 6px;">GST</h4>
+  <div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="pr_gst" style="width:auto;"> I am registered for GST. Add GST to new quotations and invoices.</label>
+    <div class="modal-sub" style="margin:4px 0 0;">Off now because SVM EdTech is not registered yet. Older invoices never change when you switch this.</div></div>
+  <div class="grid-2"><div class="field"><label>GST rate (%)</label><input type="number" id="pr_rate" min="0" max="28" step="0.01"></div>
+  <div class="field"><label>Your GSTIN</label><input type="text" id="pr_gstin"></div></div>
+  <div class="grid-2"><div class="field"><label>PAN</label><input type="text" id="pr_pan"></div>
+  <div class="field"><label>Invoice due in (days)</label><input type="number" id="pr_due" min="0" max="180"></div></div>
+  <div class="field"><label>Quotation valid for (days)</label><input type="number" id="pr_qv" min="1" max="180"></div>
+  <div class="field"><label>Terms (printed on quotations and invoices)</label><textarea id="pr_terms" placeholder="e.g. Fees are non-refundable. Renewal is due before the plan end date."></textarea></div>
+  <div class="modal-error" id="pr_err"></div>
+  <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="pr_close">Close</button><button type="button" class="btn btn-accent" id="pr_save">Save prices</button></div></div>`, true);
+$('#pr_mods').innerHTML = PRICE_MODS.map(m => `<div class="field"><label>${esc(PLAN_MODULE_LABELS[m] || m)}</label><input type="number" min="0" data-pm="${m}"></div>`).join('');
+function openPricingModal() {
+  const s = settingsCache || {}, c = cfgNow();
+  const v = x => (x == null ? '' : x);
+  $('#pr_all').value = v(s.defaultPriceErpAllModules); $('#pr_allw').value = v(s.defaultPriceErpAllModulesWebsite);
+  $('#pr_su_sel').value = v(c.setupFees.erp_selected_modules); $('#pr_su_all').value = v(c.setupFees.erp_all_modules); $('#pr_su_allw').value = v(c.setupFees.erp_all_modules_website);
+  document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { i.value = v(c.moduleYearly[i.dataset.pm]); });
+  $('#pr_gst').checked = !!c.gstEnabled; $('#pr_rate').value = c.gstRate; $('#pr_gstin').value = c.gstin || ''; $('#pr_pan').value = c.pan || '';
+  $('#pr_due').value = c.dueDays; $('#pr_qv').value = c.quoteValidityDays; $('#pr_terms').value = c.terms || '';
+  $('#pr_err').style.display = 'none'; openM('priceModalOv');
+}
+$('#pr_close').addEventListener('click', () => closeM('priceModalOv'));
+$('#pr_save').addEventListener('click', async () => {
+  const s = settingsCache || {};
+  const moduleYearly = {}; document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { moduleYearly[i.dataset.pm] = i.value; });
+  try {
+    settingsCache = await api('/api/settings', { method: 'PUT', body: {
+      contactEmail: s.contactEmail, contactPhone: s.contactPhone, contactWhatsapp: s.contactWhatsapp, companyName: s.companyName, companyAddress: s.companyAddress, paymentDetails: s.paymentDetails,
+      defaultPriceErpAllModules: $('#pr_all').value, defaultPriceErpAllModulesWebsite: $('#pr_allw').value,
+      billingConfig: { moduleYearly, setupFees: { erp_selected_modules: $('#pr_su_sel').value, erp_all_modules: $('#pr_su_all').value, erp_all_modules_website: $('#pr_su_allw').value },
+        gstEnabled: $('#pr_gst').checked, gstRate: $('#pr_rate').value, gstin: $('#pr_gstin').value, pan: $('#pr_pan').value, dueDays: $('#pr_due').value, quoteValidityDays: $('#pr_qv').value, terms: $('#pr_terms').value },
+    } });
+    closeM('priceModalOv'); showToast('Pricing and GST settings saved.');
+  } catch (e) { showErr($('#pr_err'), e.message); }
+});
+$('#btnPricing').addEventListener('click', openPricingModal);
+
+/* ---- Quotes tab ---- */
+function renderQuotesTable() {
+  const wrap = $('#quotesTableWrap');
+  if (!quotesCache.length) { wrap.innerHTML = '<div class="empty-state">No quotations yet. Click "+ New Quotation" to price a school from your price list.</div>'; return; }
+  wrap.innerHTML = `<table><thead><tr><th>Quote #</th><th>For</th><th>Plan</th><th>Total</th><th>Valid until</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    ${quotesCache.map(q => `<tr>
+      <td style="font-variant-numeric:tabular-nums;">${esc(q.quoteNumber)}</td>
+      <td class="school-name">${esc(q.partyName)}${q.schoolId ? '' : ' <span class="badge badge-pending">Prospect</span>'}</td>
+      <td>${esc(PLAN_TYPE_LABELS[q.planType] || '—')}</td>
+      <td class="billing-amount">${money2(q.totalAmount)}</td><td>${dfmt(q.validUntil)}</td>
+      <td><span class="badge badge-${q.effectiveStatus === 'accepted' ? 'paid' : q.effectiveStatus === 'declined' || q.effectiveStatus === 'expired' ? 'cancelled' : 'pending'}">${QUOTE_STATUS_LABELS[q.effectiveStatus] || q.effectiveStatus}</span></td>
+      <td><div class="row-actions">
+        ${!q.convertedInvoiceId ? `<button class="btn btn-accent btn-sm" data-q="convert" data-id="${q.id}">Make invoice</button>` : '<span class="school-notes">Invoiced</span>'}
+        <button class="btn btn-light btn-sm" data-q="print" data-id="${q.id}">Print</button>
+        <button class="btn btn-light btn-sm" data-q="edit" data-id="${q.id}">Edit</button></div></td></tr>`).join('')}
+  </tbody></table>`;
+  wrap.querySelectorAll('[data-q]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.id;
+    if (b.dataset.q === 'print') printQuote(id);
+    else if (b.dataset.q === 'edit') openQuoteModal(quotesCache.find(x => x.id === id));
+    else convertQuote(id);
+  }));
+}
+async function convertQuote(id) {
+  const q = quotesCache.find(x => x.id === id);
+  let body = {};
+  if (!q.schoolId) {
+    if (!schoolsCache.length) { showToast('Add the school under Schools first.'); return; }
+    const name = prompt('This quotation is for a prospect. Type the exact name of the onboarded school to invoice:\n\n' + schoolsCache.map(s => s.name).join('\n'), q.partyName);
+    const sc = schoolsCache.find(s => s.name.toLowerCase() === String(name || '').trim().toLowerCase());
+    if (!sc) { if (name != null) showToast('No school with that name.'); return; }
+    body.schoolId = sc.id;
+  } else if (!confirm('Create an invoice from quotation ' + q.quoteNumber + '?')) return;
+  try { const inv = await api('/api/quotes/' + id + '/convert', { method: 'POST', body }); showToast('Invoice ' + inv.invoiceNumber + ' created.'); await refreshBilling(); }
+  catch (e) { showToast(e.message); }
+}
+makeModal('qtModalOv', `
+  <h3 id="qt_title">New Quotation</h3>
+  <div class="modal-sub">Pick an onboarded school, or type a prospect's details. Prices come from your price list and can be edited.</div>
+  <div class="field"><label>School (or leave empty for a new prospect)</label><select id="qt_school"></select></div>
+  <div class="grid-2"><div class="field"><label>Name</label><input type="text" id="qt_name"></div><div class="field"><label>Contact person</label><input type="text" id="qt_contact"></div></div>
+  <div class="grid-2"><div class="field"><label>Phone</label><input type="text" id="qt_phone"></div><div class="field"><label>Email</label><input type="text" id="qt_email"></div></div>
+  <div class="field"><label>Address</label><textarea id="qt_addr" style="min-height:44px;"></textarea></div>
+  <div class="field"><label>Plan</label><select id="qt_plan"><option value="">Choose a plan…</option>${Object.entries(PLAN_TYPE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+  <div class="field" id="qt_modsrow" style="display:none;"><label>Modules</label><div id="qt_mods" style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:0.82rem;"></div></div>
+  <div style="margin-bottom:8px;"><button type="button" class="btn btn-light btn-sm" id="qt_fill">Fill from price list</button></div>
+  <div id="qt_lines"></div>
+  <div style="margin:8px 0 12px;"><button type="button" class="btn btn-light btn-sm" id="qt_add">+ Add item</button></div>
+  <div class="grid-2"><div class="field"><label>Discount (₹)</label><input type="number" id="qt_disc" min="0" step="0.01" value="0"></div><div class="field"><label>Valid until</label><input type="date" id="qt_valid"></div></div>
+  <div class="grid-2"><div class="field"><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="qt_gst" style="width:auto;"> Add GST</label></div><div class="field" id="qt_ratewrap"><input type="number" id="qt_rate" min="0" max="28" step="0.01" placeholder="GST %"></div></div>
+  <div class="field" id="qt_statusrow"><label>Status</label><select id="qt_status"><option value="draft">Draft</option><option value="sent">Sent to school</option><option value="accepted">Accepted</option><option value="declined">Declined</option></select></div>
+  <div class="box" id="qt_tot" style="background:#F5F5FB; border-radius:8px; padding:10px 12px; font-size:0.85rem;"></div>
+  <div class="field" style="margin-top:12px;"><label>Notes</label><textarea id="qt_notes"></textarea></div>
+  <div class="modal-error" id="qt_err"></div>
+  <div class="modal-actions"><div><button type="button" class="btn btn-danger" id="qt_del" style="display:none;">Delete</button></div><div class="right"><button type="button" class="btn btn-light" id="qt_close">Close</button><button type="button" class="btn btn-accent" id="qt_save">Save</button></div></div>`, true);
+let editingQuote = null;
+const qtEditor = makeLinesEditor($('#qt_lines'), () => qtTotals());
+$('#qt_mods').innerHTML = PRICE_MODS.map(m => `<label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" class="qt-mod" value="${m}" style="width:auto;"> ${esc(PLAN_MODULE_LABELS[m] || m)}</label>`).join('');
+function qtTotals() {
+  const on = $('#qt_gst').checked;
+  $('#qt_ratewrap').style.visibility = on ? 'visible' : 'hidden';
+  const t = calcTotals(qtEditor.get(), $('#qt_disc').value, on, $('#qt_rate').value);
+  $('#qt_tot').innerHTML = `Subtotal ${money2(t.subtotal)}${t.discount ? ' · Discount − ' + money2(t.discount) : ''}${on ? ' · GST ' + money2(t.gstAmount) : ''} &nbsp;→&nbsp; <b>Total ${money2(t.total)}</b>`;
+}
+['qt_disc', 'qt_gst', 'qt_rate'].forEach(id => { $('#' + id).addEventListener('input', qtTotals); $('#' + id).addEventListener('change', qtTotals); });
+function qtPlanUi() {
+  const p = $('#qt_plan').value;
+  $('#qt_modsrow').style.display = p === 'erp_selected_modules' ? 'block' : 'none';
+}
+$('#qt_plan').addEventListener('change', qtPlanUi);
+$('#qt_school').addEventListener('change', () => {
+  const s = schoolsCache.find(x => x.id === $('#qt_school').value);
+  if (!s) return;
+  $('#qt_name').value = s.name; $('#qt_contact').value = s.contactName || ''; $('#qt_phone').value = s.contactPhone || ''; $('#qt_email').value = s.contactEmail || ''; $('#qt_addr').value = s.billingAddress || '';
+  if (s.planType) { $('#qt_plan').value = s.planType; qtPlanUi(); document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = (s.planModules || []).includes(cb.value) || ((s.planModules || []).includes('transport_library') && (cb.value === 'transport' || cb.value === 'library')); }); }
+});
+$('#qt_fill').addEventListener('click', async () => {
+  const planType = $('#qt_plan').value;
+  if (!planType) { showErr($('#qt_err'), 'Choose a plan first.'); return; }
+  try {
+    const planModules = Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value);
+    const r = await api('/api/billing/price-preview', { method: 'POST', body: { planType, planModules } });
+    qtEditor.set(r.lines);
+    if (r.missing.length) showErr($('#qt_err'), 'Prices not set in Pricing & GST for: ' + r.missing.join(', ') + '. Those items are at ₹0, so edit them here.');
+    else $('#qt_err').style.display = 'none';
+  } catch (e) { showErr($('#qt_err'), e.message); }
+});
+$('#qt_add').addEventListener('click', () => qtEditor.add({ kind: 'other', description: '', qty: 1, rate: 0 }));
+function openQuoteModal(q) {
+  editingQuote = q || null; const c = cfgNow();
+  $('#qt_title').textContent = q ? 'Edit Quotation — ' + q.quoteNumber : 'New Quotation';
+  $('#qt_school').innerHTML = '<option value="">— New prospect —</option>' + schoolsCache.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  $('#qt_school').value = q && q.schoolId ? q.schoolId : '';
+  $('#qt_name').value = q ? q.partyName || '' : ''; $('#qt_contact').value = q ? q.partyContact || '' : ''; $('#qt_phone').value = q ? q.partyPhone || '' : ''; $('#qt_email').value = q ? q.partyEmail || '' : ''; $('#qt_addr').value = q ? q.partyAddress || '' : '';
+  $('#qt_plan').value = q ? q.planType || '' : ''; qtPlanUi();
+  document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = !!(q && (q.planModules || []).includes(cb.value)); });
+  qtEditor.set(q ? q.lines : []);
+  $('#qt_disc').value = q ? q.discount : 0;
+  const vu = new Date(Date.now() + 5.5 * 3600e3 + c.quoteValidityDays * 86400e3).toISOString().slice(0, 10);
+  $('#qt_valid').value = q ? dstr(q.validUntil) : vu;
+  $('#qt_gst').checked = q ? q.gstApplicable : !!c.gstEnabled; $('#qt_rate').value = q && q.gstRate != null ? q.gstRate : c.gstRate;
+  $('#qt_status').value = q ? (q.status === 'expired' ? 'sent' : q.status) : 'draft'; $('#qt_statusrow').style.display = q ? 'block' : 'none';
+  $('#qt_notes').value = q ? q.notes || '' : '';
+  $('#qt_del').style.display = q ? 'inline-block' : 'none'; $('#qt_err').style.display = 'none';
+  qtTotals(); openM('qtModalOv');
+}
+$('#btnAddQuote').addEventListener('click', () => openQuoteModal(null));
+$('#qt_close').addEventListener('click', () => closeM('qtModalOv'));
+$('#qt_save').addEventListener('click', async () => {
+  const on = $('#qt_gst').checked;
+  const body = {
+    schoolId: $('#qt_school').value || null, partyName: $('#qt_name').value, partyContact: $('#qt_contact').value, partyPhone: $('#qt_phone').value, partyEmail: $('#qt_email').value, partyAddress: $('#qt_addr').value,
+    planType: $('#qt_plan').value || undefined, planModules: Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value),
+    lines: qtEditor.get(), discount: $('#qt_disc').value || 0, validUntil: $('#qt_valid').value || undefined, gstApplicable: on, gstRate: on ? $('#qt_rate').value : null, notes: $('#qt_notes').value,
+  };
+  if (editingQuote) body.status = $('#qt_status').value;
+  try {
+    if (!body.lines.length) throw new Error('Add at least one item (use "Fill from price list").');
+    if (editingQuote) await api('/api/quotes/' + editingQuote.id, { method: 'PUT', body });
+    else await api('/api/quotes', { method: 'POST', body });
+    closeM('qtModalOv'); showToast('Quotation saved.'); await refreshBilling();
+  } catch (e) { showErr($('#qt_err'), e.message); }
+});
+$('#qt_del').addEventListener('click', async () => {
+  if (!confirm('Delete this quotation?')) return;
+  try { await api('/api/quotes/' + editingQuote.id, { method: 'DELETE' }); closeM('qtModalOv'); showToast('Quotation deleted.'); await refreshBilling(); }
+  catch (e) { showErr($('#qt_err'), e.message); }
+});
+
+/* ---- Renewal: one button per onboarded school ---- */
+async function generateRenewal(schoolId) {
+  const s = schoolsCache.find(x => x.id === schoolId); if (!s) return;
+  try {
+    const pv = await api('/api/billing/price-preview', { method: 'POST', body: { schoolId, includeSetup: false } });
+    const amt = s.billingAmount > 0 ? s.billingAmount : pv.totals.total;
+    if (!confirm('Generate the yearly renewal invoice for ' + s.name + '?\n\nAbout ' + money2(amt) + (s.planValidUntil ? '\nCurrent plan runs to ' + dfmt(s.planValidUntil) : '') + '\n(It is made from the school\'s agreed amount, or from the price list.)')) return;
+    const inv = await api('/api/schools/' + schoolId + '/renewal-invoice', { method: 'POST', body: {} });
+    showToast('Renewal invoice ' + inv.invoiceNumber + ' created for ' + money2(inv.totalAmount) + '.');
+    await refreshBilling();
+    document.querySelector('[data-tab="billing"]').click();
+  } catch (e) { showToast(e.message); }
+}
+function fillRenewSelect() {
+  const sel = $('#renewSchoolSel'); if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Choose a school…</option>' + schoolsCache.map(s => `<option value="${s.id}">${esc(s.name)}${s.planValidUntil ? ' (to ' + dfmt(s.planValidUntil) + ')' : ''}</option>`).join('');
+  sel.value = cur;
+}
+$('#btnRenew').addEventListener('click', () => { const id = $('#renewSchoolSel').value; if (!id) { showToast('Choose a school first.'); return; } generateRenewal(id); });
+
+/* ---- School billing details (address, GSTIN, plan end) ---- */
+makeModal('sbModalOv', `
+  <h3 id="sb_title">Billing details</h3>
+  <div class="modal-sub">Printed on this school's invoices and receipts.</div>
+  <div class="field"><label>Billing address</label><textarea id="sb_addr"></textarea></div>
+  <div class="grid-2"><div class="field"><label>School GSTIN (if any)</label><input type="text" id="sb_gstin"></div>
+  <div class="field"><label>Plan runs until</label><input type="date" id="sb_valid"></div></div>
+  <div class="modal-sub">The plan end date moves forward by itself when a yearly invoice is fully paid. Set it by hand only for a school you already bill.</div>
+  <div class="modal-error" id="sb_err"></div>
+  <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="sb_close">Close</button><button type="button" class="btn btn-accent" id="sb_save">Save</button></div></div>`);
+let sbId = null;
+function openSchoolBilling(id) {
+  const s = schoolsCache.find(x => x.id === id); if (!s) return; sbId = id;
+  $('#sb_title').textContent = 'Billing details — ' + s.name;
+  $('#sb_addr').value = s.billingAddress || ''; $('#sb_gstin').value = s.schoolGstin || ''; $('#sb_valid').value = dstr(s.planValidUntil);
+  $('#sb_err').style.display = 'none'; openM('sbModalOv');
+}
+$('#sb_close').addEventListener('click', () => closeM('sbModalOv'));
+$('#sb_save').addEventListener('click', async () => {
+  try { await api('/api/schools/' + sbId + '/billing-info', { method: 'PUT', body: { billingAddress: $('#sb_addr').value, schoolGstin: $('#sb_gstin').value, planValidUntil: $('#sb_valid').value || null } }); closeM('sbModalOv'); showToast('Saved.'); await refreshBilling(); }
+  catch (e) { showErr($('#sb_err'), e.message); }
 });
 
 /* ---------- Auto-refresh ---------- */
