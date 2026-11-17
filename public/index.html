@@ -335,7 +335,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Schools</h2>
-          <button class="btn btn-accent" id="btnAddSchool">+ Add School</button>
+          <div style="display:flex; gap:8px;"><button class="btn btn-accent" id="btnOnboard">🚀 Onboard New School</button><button class="btn btn-light" id="btnAddSchool">+ Add School (quick)</button></div>
         </div>
         <div id="schoolsTableWrap"></div>
       </div>
@@ -3155,6 +3155,131 @@ $('#sb_close').addEventListener('click', () => closeM('sbModalOv'));
 $('#sb_save').addEventListener('click', async () => {
   try { await api('/api/schools/' + sbId + '/billing-info', { method: 'PUT', body: { billingAddress: $('#sb_addr').value, schoolGstin: $('#sb_gstin').value, planValidUntil: $('#sb_valid').value || null } }); closeM('sbModalOv'); showToast('Saved.'); await refreshBilling(); }
   catch (e) { showErr($('#sb_err'), e.message); }
+});
+
+
+/* ================= Onboard a new school: guided wizard (package -> details -> bill -> hand-over) ================= */
+const OB_PLANS = [
+  ['erp_all_modules_website', '🌐', 'Website + complete ERP', 'The school website and every ERP module. The usual package.'],
+  ['erp_all_modules', '🏫', 'Complete ERP only', 'Every ERP module, no website.'],
+  ['erp_selected_modules', '🧩', 'ERP with chosen modules', 'Only the modules the school pays for. The rest stay hidden.'],
+];
+let OB = null;
+makeModal('obModalOv', `
+  <h3 id="ob_title">Onboard a new school</h3>
+  <div class="modal-sub" id="ob_sub"></div>
+  <div id="ob_body"></div>
+  <div class="modal-error" id="ob_err"></div>
+  <div class="modal-actions"><div><button type="button" class="btn btn-light" id="ob_back">Back</button></div>
+    <div class="right"><button type="button" class="btn btn-light" id="ob_close">Close</button><button type="button" class="btn btn-accent" id="ob_next">Next</button></div></div>`, true);
+function obPlanCode() {
+  return OB.planType === 'erp_all_modules_website' ? 'all_website' : OB.planType === 'erp_all_modules' ? 'all' : 'selected:' + OB.modules.join(',');
+}
+async function obPreview() {
+  try { OB.preview = await api('/api/billing/price-preview', { method: 'POST', body: { planType: OB.planType, planModules: OB.modules } }); }
+  catch (e) { OB.preview = null; }
+}
+function obDraw() {
+  const b = $('#ob_body'); $('#ob_err').style.display = 'none';
+  const steps = ['Package', 'School details', 'Price and bill', 'Hand-over'];
+  $('#ob_sub').innerHTML = steps.map((s, i) => `<span style="${i === OB.step ? 'font-weight:700; color:#1F2A6B;' : 'opacity:.55;'}">${i + 1}. ${s}</span>`).join(' &nbsp;›&nbsp; ');
+  $('#ob_back').style.visibility = OB.step === 0 || OB.step === 3 ? 'hidden' : 'visible';
+  $('#ob_next').textContent = OB.step === 2 ? 'Create the school' : OB.step === 3 ? 'Done' : 'Next';
+  $('#ob_close').style.display = OB.step === 3 ? 'none' : 'inline-block';
+  if (OB.step === 0) {
+    b.innerHTML = '<p class="modal-sub">What did the school choose? Everything after this fills itself in from your answer.</p>' +
+      OB_PLANS.map(p => `<div data-obp="${p[0]}" style="cursor:pointer; border:2px solid ${OB.planType === p[0] ? '#A85F0B' : '#E3E5EF'}; background:${OB.planType === p[0] ? '#FFF6E3' : '#fff'}; border-radius:12px; padding:12px 14px; margin-bottom:10px;"><b>${p[1]} ${p[2]}</b><div class="modal-sub" style="margin:2px 0 0;">${p[3]}</div></div>`).join('') +
+      (OB.planType === 'erp_selected_modules' ? '<div class="field"><label>Tick the modules they bought (Students, fees basics, reports and users are always included)</label><div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; font-size:0.85rem;">' +
+        PRICE_MODS.map(m => `<label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" data-obm="${m}" ${OB.modules.includes(m) ? 'checked' : ''} style="width:auto;"> ${esc(PLAN_MODULE_LABELS[m] || m)}</label>`).join('') + '</div></div>' : '');
+    b.querySelectorAll('[data-obp]').forEach(el => el.addEventListener('click', () => { OB.planType = el.dataset.obp; if (OB.planType === 'erp_selected_modules' && !OB.modules.length) OB.modules = ['fees']; obDraw(); }));
+    b.querySelectorAll('[data-obm]').forEach(el => el.addEventListener('change', () => { OB.modules = Array.from(b.querySelectorAll('[data-obm]:checked')).map(x => x.dataset.obm); }));
+  } else if (OB.step === 1) {
+    const hasWeb = OB.planType === 'erp_all_modules_website';
+    b.innerHTML = `<div class="field"><label>School name *</label><input type="text" id="ob_name" value="${esc(OB.name)}" placeholder="Sunrise Public School"></div>
+      <div class="grid-2"><div class="field"><label>Contact person</label><input type="text" id="ob_cname" value="${esc(OB.cname)}"></div><div class="field"><label>Phone</label><input type="text" id="ob_phone" value="${esc(OB.phone)}"></div></div>
+      <div class="grid-2"><div class="field"><label>Email</label><input type="text" id="ob_email" value="${esc(OB.email)}"></div><div class="field"><label>School GSTIN (if any)</label><input type="text" id="ob_gstin" value="${esc(OB.gstin)}"></div></div>
+      <div class="field"><label>Address (printed on its bills)</label><textarea id="ob_addr" style="min-height:50px;">${esc(OB.addr)}</textarea></div>
+      <div class="grid-2"><div class="field"><label>ERP address (if already decided)</label><input type="text" id="ob_erpurl" value="${esc(OB.erpUrl)}" placeholder="https://erp.school.edu.in"></div>
+      ${hasWeb ? `<div class="field"><label>Website address</label><input type="text" id="ob_weburl" value="${esc(OB.webUrl)}" placeholder="https://www.school.edu.in"></div>` : '<div></div>'}</div>
+      <div class="modal-sub">Don't know the addresses yet? Leave them empty. You can add them later with Edit.</div>`;
+  } else if (OB.step === 2) {
+    const pv = OB.preview;
+    const lines = pv ? pv.lines : [];
+    const yearly = lines.filter(l => l.kind === 'subscription').reduce((s, l) => s + l.amount, 0);
+    if (OB.yearly == null) OB.yearly = yearly || '';
+    b.innerHTML = `<p class="modal-sub">From your price list for <b>${esc(OB_PLANS.find(p => p[0] === OB.planType)[2])}</b>:</p>
+      <table style="width:100%; font-size:0.85rem; margin-bottom:8px;"><tbody>${lines.map(l => `<tr><td>${esc(l.description)}</td><td class="r" style="text-align:right;">${money2(l.amount)}</td></tr>`).join('') || '<tr><td>No prices set yet.</td></tr>'}</tbody></table>
+      ${pv && pv.missing.length ? `<div class="modal-error" style="display:block;">Not priced yet in Billing setup: ${esc(pv.missing.join(', '))}. You can still continue and type the agreed yearly amount below.</div>` : ''}
+      <div class="field"><label>Agreed yearly amount (₹). Used for every yearly renewal bill</label><input type="number" id="ob_yearly" min="0" value="${esc(OB.yearly)}"></div>
+      <div class="field"><label>What should I do about billing now?</label>
+        <label style="display:flex; gap:8px; align-items:center; font-size:0.85rem;"><input type="radio" name="ob_bill" value="invoice" ${OB.bill === 'invoice' ? 'checked' : ''} style="width:auto;"> Make the first bill now (setup + first year)</label>
+        <label style="display:flex; gap:8px; align-items:center; font-size:0.85rem;"><input type="radio" name="ob_bill" value="quote" ${OB.bill === 'quote' ? 'checked' : ''} style="width:auto;"> Make a quotation to send first</label>
+        <label style="display:flex; gap:8px; align-items:center; font-size:0.85rem;"><input type="radio" name="ob_bill" value="none" ${OB.bill === 'none' ? 'checked' : ''} style="width:auto;"> Nothing yet</label></div>`;
+  } else {
+    const r = OB.result, s = r.school;
+    const lines = ['VENDOR_DASHBOARD_URL=' + location.origin, 'VENDOR_SCHOOL_ID=' + s.id, 'VENDOR_API_KEY=' + s.apiKey, 'SCHOOL_PLAN=' + obPlanCode()].join('\n');
+    OB.lines = lines;
+    b.innerHTML = `<div style="background:#E8F7F0; border-radius:10px; padding:12px 14px; margin-bottom:12px;"><b>✅ ${esc(s.name)} is created.</b>${r.invoice ? `<br>First bill <b>${esc(r.invoice.invoiceNumber)}</b> (${money2(r.invoice.totalAmount)}) is ready under Billing.` : ''}${r.quote ? `<br>Quotation <b>${esc(r.quote.quoteNumber)}</b> (${money2(r.quote.totalAmount)}) is ready under Quotes.` : ''}</div>
+      <h4 style="margin:6px 0;">Lines for the school's GoDaddy secrets</h4>
+      <div class="modal-sub">Paste these into the new school's <b>Settings → Secrets</b> (both Preview and Publish). They connect the school to this dashboard and set exactly what it bought.</div>
+      <pre style="background:#F5F5FB; border-radius:8px; padding:10px 12px; font-size:0.78rem; overflow:auto; user-select:all;" id="ob_lines">${esc(lines)}</pre>
+      <button type="button" class="btn btn-accent btn-sm" id="ob_copy">📋 Copy these lines</button>
+      <h4 style="margin:14px 0 6px;">What to do next</h4>
+      <ol style="font-size:0.85rem; padding-left:20px; line-height:1.7;">
+        <li>Open the <b>Launch Wizard</b> on your computer (Start-Launch-Wizard.bat). It already knows how to set up the website and the ERP. Choose the same package: <b>${esc(OB_PLANS.find(p => p[0] === OB.planType)[2])}</b>.</li>
+        <li>Paste the lines above into the school's secrets and restart.</li>
+        <li>When the school pays, open <b>Billing</b> → <b>Record payment</b> and give them the numbered receipt.</li>
+        <li>Each year, press <b>Generate renewal</b> on the school's row.</li></ol>`;
+    const cp = $('#ob_copy'); if (cp) cp.addEventListener('click', async () => { try { await navigator.clipboard.writeText(lines); showToast('Copied.'); } catch (e) { const pre = $('#ob_lines'); const r2 = document.createRange(); r2.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r2); showToast('Press Ctrl+C to copy the selected lines.'); } });
+  }
+}
+function openOnboard() {
+  OB = { step: 0, planType: 'erp_all_modules_website', modules: [], name: '', cname: '', phone: '', email: '', gstin: '', addr: '', erpUrl: '', webUrl: '', yearly: null, bill: 'invoice', preview: null, result: null };
+  obDraw(); openM('obModalOv');
+}
+$('#btnOnboard').addEventListener('click', openOnboard);
+$('#ob_close').addEventListener('click', () => closeM('obModalOv'));
+$('#ob_back').addEventListener('click', () => { if (OB.step > 0) { obCollect(); OB.step--; obDraw(); } });
+function obCollect() {
+  const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
+  if (OB.step === 1) { OB.name = g('ob_name'); OB.cname = g('ob_cname'); OB.phone = g('ob_phone'); OB.email = g('ob_email'); OB.gstin = g('ob_gstin'); OB.addr = g('ob_addr'); OB.erpUrl = g('ob_erpurl') || ''; const w = g('ob_weburl'); OB.webUrl = w || ''; }
+  if (OB.step === 2) { OB.yearly = g('ob_yearly'); const r = document.querySelector('input[name="ob_bill"]:checked'); if (r) OB.bill = r.value; }
+}
+$('#ob_next').addEventListener('click', async () => {
+  const err = $('#ob_err'); err.style.display = 'none';
+  try {
+    obCollect();
+    if (OB.step === 0) {
+      if (OB.planType === 'erp_selected_modules' && !OB.modules.length) throw new Error('Tick at least one module.');
+      OB.step = 1; obDraw();
+    } else if (OB.step === 1) {
+      if (!OB.name) throw new Error('Type the school name.');
+      for (const u of [OB.erpUrl, OB.webUrl]) if (u && !/^https?:\/\/[^ ]+\.[^ ]+/.test(u)) throw new Error('An address must start with https:// and look like https://name.com');
+      await obPreview(); OB.yearly = null; OB.step = 2; obDraw();
+    } else if (OB.step === 2) {
+      const yearly = Number(OB.yearly) || 0;
+      const school = await api('/api/schools', { method: 'POST', body: {
+        name: OB.name, status: 'temporary', erpUrl: OB.erpUrl || null, websiteUrl: OB.webUrl || null, contactName: OB.cname, contactPhone: OB.phone, contactEmail: OB.email,
+        planType: OB.planType, planModules: OB.planType === 'erp_selected_modules' ? OB.modules : [],
+        billingPlan: OB_PLANS.find(p => p[0] === OB.planType)[2], billingAmount: yearly || null, billingCycle: 'annual',
+      } });
+      if (OB.addr || OB.gstin) await api('/api/schools/' + school.id + '/billing-info', { method: 'PUT', body: { billingAddress: OB.addr, schoolGstin: OB.gstin } });
+      const result = { school };
+      const pv = OB.preview;
+      if (OB.bill !== 'none') {
+        // setup fee from the price list + the agreed yearly amount as the subscription line
+        const lines = [];
+        const setup = pv ? pv.lines.find(l => l.kind === 'setup') : null;
+        if (setup && setup.amount > 0) lines.push({ kind: 'setup', description: setup.description, qty: 1, rate: setup.amount });
+        if (yearly > 0) lines.push({ kind: 'subscription', description: 'Yearly subscription (' + OB_PLANS.find(p => p[0] === OB.planType)[2] + ')', qty: 1, rate: yearly });
+        if (!lines.length) throw new Error('There is nothing to bill yet. Type the agreed yearly amount, or choose "Nothing yet". (The school was created.)');
+        if (OB.bill === 'invoice') result.invoice = await api('/api/invoices', { method: 'POST', body: { schoolId: school.id, description: 'New school setup and first year', lines } });
+        else result.quote = await api('/api/quotes', { method: 'POST', body: { schoolId: school.id, planType: OB.planType, planModules: OB.modules, lines } });
+      }
+      OB.result = result; OB.step = 3; obDraw();
+      refreshBilling().catch(() => {}); loadAll().catch(() => {});
+    } else { closeM('obModalOv'); document.querySelector('[data-tab="schools"]').click(); }
+  } catch (e) { showErr(err, e.message); }
 });
 
 /* ---------- Auto-refresh ---------- */
