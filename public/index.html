@@ -364,6 +364,7 @@
             <option value="resolved">Resolved</option>
             <option value="closed">Closed</option>
           </select>
+          <button class="btn btn-light btn-sm" id="btnClearDoneQueries" title="Delete every query marked Resolved or Closed">Delete all Resolved &amp; Closed</button>
         </div>
         <div id="queriesTableWrap"></div>
       </div>
@@ -383,6 +384,7 @@
             <option value="contacted">Contacted</option>
             <option value="closed">Closed</option>
           </select>
+          <button class="btn btn-light btn-sm" id="btnClearClosedLeads" title="Delete every lead marked Closed">Delete all Closed leads</button>
         </div>
         <div id="leadsTableWrap"></div>
       </div>
@@ -2419,14 +2421,27 @@ function renderQueriesTable() {
             <td><span class="badge badge-priority-${q.priority}">${titleCase(q.priority)}</span></td>
             <td><span class="badge badge-${q.status}">${titleCase(q.status)}</span></td>
             <td>${relativeTime(q.createdAt)}</td>
-            <td><div class="row-actions"><button class="btn btn-light btn-sm" data-action="open-query" data-id="${q.id}">Open</button></div></td>
+            <td><div class="row-actions"><button class="btn btn-light btn-sm" data-action="open-query" data-id="${q.id}">Open</button><button class="btn btn-light btn-sm" data-action="del-query" data-id="${q.id}" style="color:#b3261e">Delete</button></div></td>
           </tr>
         `).join('')}
       </tbody>
     </table>
   `;
   wrap.querySelectorAll('[data-action="open-query"]').forEach(btn => btn.addEventListener('click', () => openQueryThread(btn.dataset.id)));
+  wrap.querySelectorAll('[data-action="del-query"]').forEach(btn => btn.addEventListener('click', async () => {
+    const q = queriesCache.find(x => x.id === btn.dataset.id);
+    if (!confirm('Delete this query' + (q && q.subject ? ' (' + q.subject + ')' : '') + '? This cannot be undone.')) return;
+    try { await api('/api/queries/' + btn.dataset.id, { method: 'DELETE' }); showToast('Query deleted.'); await loadAll(); }
+    catch (err) { showToast('Could not delete: ' + err.message); }
+  }));
 }
+$('#btnClearDoneQueries').addEventListener('click', async () => {
+  const n = queriesCache.filter(q => q.status === 'resolved' || q.status === 'closed').length;
+  if (!n) { showToast('No Resolved or Closed queries to delete.'); return; }
+  if (!confirm('Delete all ' + n + ' Resolved and Closed queries? This cannot be undone. Open and In Progress ones are kept.')) return;
+  try { const r = await api('/api/queries/delete-done', { method: 'POST' }); showToast(r.deleted + ' queries deleted.'); await loadAll(); }
+  catch (err) { showToast('Could not delete: ' + err.message); }
+});
 
 $('#fltQuerySchool').addEventListener('change', renderQueriesTable);
 $('#fltQueryStatus').addEventListener('change', renderQueriesTable);
@@ -2447,7 +2462,7 @@ function renderLeadsTable() {
   }
   wrap.innerHTML = `
     <table>
-      <thead><tr><th>School</th><th>Contact</th><th>Reach</th><th>Message</th><th>Received</th><th>Status</th></tr></thead>
+      <thead><tr><th>School</th><th>Contact</th><th>Reach</th><th>Message</th><th>Received</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${rows.map(l => `
           <tr>
@@ -2466,6 +2481,7 @@ function renderLeadsTable() {
                 <option value="closed" ${l.status === 'closed' ? 'selected' : ''}>Closed</option>
               </select>
             </td>
+            <td><button class="btn btn-light btn-sm lead-del" data-id="${l.id}" style="color:#b3261e">Delete</button></td>
           </tr>
         `).join('')}
       </tbody>
@@ -2488,6 +2504,25 @@ function renderLeadsTable() {
 }
 
 $('#fltLeadStatus').addEventListener('change', renderLeadsTable);
+$('#leadsTableWrap').addEventListener('click', async e => {
+  const btn = e.target.closest('.lead-del'); if (!btn) return;
+  const l = leadsCache.find(x => x.id === btn.dataset.id);
+  if (!confirm('Delete this lead' + (l ? ' (' + (l.schoolName || l.contactName) + ')' : '') + '? This cannot be undone.')) return;
+  try {
+    await api('/api/leads/' + btn.dataset.id, { method: 'DELETE' });
+    leadsCache = leadsCache.filter(x => x.id !== btn.dataset.id); renderLeadsTable();
+    const summary = await api('/api/summary'); updateLeadsCountPill(summary.newLeads); showToast('Lead deleted.');
+  } catch (err) { showToast('Could not delete: ' + err.message); }
+});
+$('#btnClearClosedLeads').addEventListener('click', async () => {
+  const n = leadsCache.filter(l => l.status === 'closed').length;
+  if (!n) { showToast('No Closed leads to delete.'); return; }
+  if (!confirm('Delete all ' + n + ' Closed leads? This cannot be undone. New and Contacted ones are kept.')) return;
+  try {
+    const r = await api('/api/leads/delete-closed', { method: 'POST' });
+    leadsCache = leadsCache.filter(l => l.status !== 'closed'); renderLeadsTable(); showToast(r.deleted + ' leads deleted.');
+  } catch (err) { showToast('Could not delete: ' + err.message); }
+});
 
 /* ---------- Support: add query modal ---------- */
 function openAddQueryModal() {

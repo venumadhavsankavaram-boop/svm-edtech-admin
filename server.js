@@ -1524,6 +1524,17 @@ app.put('/api/queries/:id', async (req, res) => {
   }
 });
 
+// Clear every support query already Resolved or Closed in one go.
+app.post('/api/queries/delete-done', async (req, res) => {
+  try {
+    const rows = await sql`DELETE FROM vendor_queries WHERE status IN ('resolved', 'closed') RETURNING id`;
+    return res.status(200).json({ ok: true, deleted: rows.length });
+  } catch (err) {
+    console.error('clear done queries error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
 app.delete('/api/queries/:id', async (req, res) => {
   try {
     await sql`DELETE FROM vendor_queries WHERE id = ${req.params.id}`;
@@ -1663,6 +1674,17 @@ app.put('/api/leads/:id', async (req, res) => {
     return res.status(200).json(shapeLead(rows[0]));
   } catch (err) {
     console.error('update lead error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// Clear every lead already marked Closed (attended) in one go, so the list doesn't pile up.
+app.post('/api/leads/delete-closed', async (req, res) => {
+  try {
+    const rows = await sql`DELETE FROM vendor_leads WHERE status = 'closed' RETURNING id`;
+    return res.status(200).json({ ok: true, deleted: rows.length });
+  } catch (err) {
+    console.error('clear closed leads error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
 });
