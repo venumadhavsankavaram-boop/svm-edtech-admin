@@ -6,7 +6,8 @@ export const MODULE_LABELS = {
   attendance: 'Attendance',
   exams: 'Exams & results',
   accounting: 'Accounting',
-  staff_payroll: 'Staff & payroll',
+  staff_basic: 'Staff directory & attendance',
+  staff_payroll: 'Staff payroll',
   inventory: 'Inventory',
   hostel: 'Hostel',
   transport: 'Transport',
@@ -38,12 +39,21 @@ export const TIER_DEFAULTS = {
 };
 // Which ERP modules each plan switches on (the school's ERP reads plan_modules).
 const CORE_SET = ['fees', 'attendance', 'exams', 'communications'];
+
 export const TIER_MODULES = {
   starter: ['fees', 'attendance', 'communications'],
   basic: CORE_SET,
-  core: [...CORE_SET, 'timetable_homework'],
+  core: [...CORE_SET, 'timetable_homework', 'staff_basic'],
   complete: Object.keys(MODULE_LABELS),
   complete_website: Object.keys(MODULE_LABELS),
+};
+// Logins and apps each plan includes (the standard). A role not in the plan gets no login; connected screens disappear.
+export const TIER_FEATURES = {
+  starter:          { parentLogin: false, teacherLogin: false, parentApp: false, backups: 'weekly' },
+  basic:            { parentLogin: true,  teacherLogin: false, parentApp: false, backups: 'weekly' },
+  core:             { parentLogin: true,  teacherLogin: true,  parentApp: false, backups: 'nightly' },
+  complete:         { parentLogin: true,  teacherLogin: true,  parentApp: true,  backups: 'nightly' },
+  complete_website: { parentLogin: true,  teacherLogin: true,  parentApp: true,  backups: 'nightly' },
 };
 export const STARTER_FREE_LIMIT = 100;
 export const LEGACY_PLAN_TYPES = Object.keys(PLAN_LABELS);

@@ -1754,7 +1754,7 @@ const PLAN_TYPE_LABELS = {
 };
 const TIER_KEYS = ['starter', 'basic', 'core', 'complete', 'complete_website'];
 const TIER_DEFAULTS = { starter: { rate: 0, min: 0, setupRate: 0, setupMin: 0 }, basic: { rate: 30, min: 6000, setupRate: 30, setupMin: 4000 }, core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 }, complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 }, complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 } };
-const TIER_MODULES = { starter: ['fees','attendance','communications'], basic: ['fees','attendance','exams','communications'], core: ['fees','attendance','exams','communications','timetable_homework'], complete: ['fees','attendance','exams','accounting','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], complete_website: ['fees','attendance','exams','accounting','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'] };
+const TIER_MODULES = { starter: ['fees','attendance','communications'], basic: ['fees','attendance','exams','communications'], core: ['fees','attendance','exams','communications','timetable_homework','staff_basic'], complete: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], complete_website: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'] };
 // Yearly and one-time setup for a per-student plan: the larger of the minimum and rate x students.
 function tierPrice(tier, n) {
   const c = (typeof cfgNow === 'function' ? cfgNow() : {}) || {};
@@ -1763,7 +1763,7 @@ function tierPrice(tier, n) {
   return { yearly: Math.max(t.min, t.rate * n), setup: Math.max(t.setupMin, t.setupRate * n), t };
 }
 const PLAN_MODULE_LABELS = {
-  fees: 'Fees & Payments', attendance: 'Attendance', exams: 'Exams & Marks', accounting: 'Accounting', staff_payroll: 'Staff & Payroll', inventory: 'Inventory', hostel: 'Hostel', transport: 'Transport', library: 'Library', timetable_homework: 'Timetable & Homework', communications: 'Communications', transport_library: 'Transport + Library',
+  fees: 'Fees & Payments', attendance: 'Attendance', exams: 'Exams & Marks', accounting: 'Accounting', staff_basic: 'Staff directory & attendance', staff_payroll: 'Staff payroll', inventory: 'Inventory', hostel: 'Hostel', transport: 'Transport', library: 'Library', timetable_homework: 'Timetable & Homework', communications: 'Communications', transport_library: 'Transport + Library',
 };
 function getSelectedPlanModules() {
   return Array.from(document.querySelectorAll('.plan-module-cb:checked')).map(cb => cb.value);
@@ -2956,7 +2956,7 @@ $('#payM_save').addEventListener('click', async () => {
 });
 
 /* ---- Pricing & GST modal ---- */
-const PRICE_MODS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications'];
+const PRICE_MODS = ['fees', 'attendance', 'exams', 'accounting', 'staff_basic', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications'];
 makeModal('priceModalOv', `
   <h3>Billing setup</h3>
   <div class="modal-sub">Fill this once. After that every bill, quotation and receipt fills itself in. You can change it any time.</div>

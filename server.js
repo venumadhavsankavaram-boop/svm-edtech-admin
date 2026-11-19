@@ -512,7 +512,7 @@ async function ensureSchema() {
 // auto-fill — that happens client-side so the vendor sees it before saving
 // and can still hand-edit it for a custom deal).
 const PLAN_TYPES = BL.PLAN_TYPES; // 3 legacy types + the 5 per-student plans (starter, basic, core, complete, complete_website)
-const PLAN_MODULE_KEYS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications', 'transport_library'];
+const PLAN_MODULE_KEYS = ['fees', 'attendance', 'exams', 'accounting', 'staff_basic', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications', 'transport_library'];
 await ensureSchema();
 
 async function seedDefaultAdminIfEmpty() {
@@ -2355,7 +2355,10 @@ app.post('/api/cron/run-backups', async (req, res) => {
   try {
     const schools = await sql`SELECT * FROM schools WHERE erp_url IS NOT NULL AND erp_url != ''`;
     const results = [];
+    const isSunday = new Date(Date.now() + 5.5 * 3600 * 1000).getUTCDay() === 0;
     for (const school of schools) {
+      // Starter and Basic get a weekly backup (Sundays); Core and above get one every night.
+      if (BL.isTier(school.plan_type) && BL.TIER_FEATURES[school.plan_type].backups === 'weekly' && !isSunday) { results.push({ schoolId: school.id, schoolName: school.name, ok: true, skipped: 'weekly plan' }); continue; }
       const result = await runBackupForSchool(school);
       results.push({ schoolId: school.id, schoolName: school.name, ok: result.ok, error: result.error });
     }
@@ -2610,6 +2613,7 @@ app.post('/api/ingest/heartbeat', async (req, res) => {
       accessSuspendedReason: school.access_suspended_reason || null,
       planType: school.plan_type || null,
       planModules: school.plan_modules || [],
+      planFeatures: BL.isTier(school.plan_type) ? BL.TIER_FEATURES[school.plan_type] : null,
       planValidUntil: school.plan_valid_until ? String(school.plan_valid_until instanceof Date ? school.plan_valid_until.toISOString() : school.plan_valid_until).slice(0, 10) : null,
     });
   } catch (err) {
