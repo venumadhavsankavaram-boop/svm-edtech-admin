@@ -588,6 +588,7 @@ const PUBLIC_API_ROUTES = [
   { path: '/api/ingest/heartbeat', methods: ['POST'] },
   { path: '/api/ingest/error', methods: ['POST'] },
   { path: '/api/ingest/query', methods: ['POST'] },
+  { path: '/api/ingest/demo-lead', methods: ['POST'] },
   // The marketing site's demo-request/enquiry form — CORS-scoped above to
   // MARKETING_SITE_ORIGIN, not authenticated by anything else (there's no
   // school or vendor session to check; anyone can ask about the product).
@@ -2143,7 +2144,7 @@ app.post('/api/public/leads', async (req, res) => {
     const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     const ip = fwd || req.socket.remoteAddress || 'unknown';
     const nowMs = Date.now(), hits = (leadHits.get(ip) || []).filter(t => nowMs - t < 3600000);
-    if (hits.length >= 5) return res.status(429).json({ error: 'Too many requests. Please call or WhatsApp us on 9701424177.' });
+    if (hits.length >= 5) return res.status(429).json({ error: 'Too many requests. Please call or WhatsApp us on 7780204177.' });
     hits.push(nowMs); leadHits.set(ip, hits);
     if (leadHits.size > 5000) leadHits.clear();
     if (!contactName || !String(contactName).trim()) {
@@ -2618,6 +2619,31 @@ app.post('/api/ingest/heartbeat', async (req, res) => {
     });
   } catch (err) {
     console.error('heartbeat ingest error:', err);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  }
+});
+
+// The demo ERP (demo.svmedtech.com) reports each visitor who starts the live demo, so they land in the Leads tab.
+// Same school-key check as the heartbeat. One lead per phone number: a repeat visit refreshes the note, never adds a duplicate.
+app.post('/api/ingest/demo-lead', async (req, res) => {
+  try {
+    const school = await authenticateSchool(req, res);
+    if (!school) return;
+    const b = req.body || {};
+    const name = String(b.name || '').trim().slice(0, 200), sch = String(b.school || '').trim().slice(0, 200);
+    const phone = String(b.phone || '').replace(/[^0-9+]/g, '').slice(0, 20), message = String(b.message || '').trim().slice(0, 1000);
+    if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
+    const tail = phone.slice(-10);
+    const found = await sql`SELECT id FROM vendor_leads WHERE source = 'demo' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = ${tail} LIMIT 1`;
+    if (found.length) {
+      await sql`UPDATE vendor_leads SET message = ${message}, updated_at = now() WHERE id = ${found[0].id}`;
+      return res.status(200).json({ ok: true, repeat: true });
+    }
+    const id = 'lead_' + crypto.randomBytes(8).toString('hex');
+    await sql`INSERT INTO vendor_leads (id, school_name, contact_name, phone, message, source) VALUES (${id}, ${sch || null}, ${name}, ${phone}, ${message || null}, 'demo')`;
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error('demo lead ingest error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
 });

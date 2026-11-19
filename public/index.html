@@ -782,11 +782,11 @@
       <div class="grid-2">
         <div class="field">
           <label for="fContactPhone">Phone Number</label>
-          <input type="tel" id="fContactPhone" placeholder="e.g. 9701424177">
+          <input type="tel" id="fContactPhone" placeholder="e.g. 7780204177">
         </div>
         <div class="field">
           <label for="fContactWhatsapp">WhatsApp Number</label>
-          <input type="tel" id="fContactWhatsapp" placeholder="e.g. 9701424177">
+          <input type="tel" id="fContactWhatsapp" placeholder="e.g. 7780204177">
         </div>
         <div class="field">
           <label for="fCompanyName">Name on invoices</label>
@@ -2331,11 +2331,11 @@ function renderLeadsTable() {
       <tbody>
         ${rows.map(l => `
           <tr>
-            <td class="school-name">${l.schoolName ? esc(l.schoolName) : '<span style="color:var(--ink-soft);">—</span>'}</td>
+            <td class="school-name">${l.schoolName ? esc(l.schoolName) : '<span style="color:var(--ink-soft);">—</span>'}${l.source === 'demo' ? ' <span style="background:#fff4de;color:#a85f0b;border-radius:6px;padding:1px 6px;font-size:.7rem;font-weight:700;">DEMO</span>' : ''}</td>
             <td>${esc(l.contactName)}</td>
             <td>
               ${l.email ? `<div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>` : ''}
-              ${l.phone ? `<div><a href="tel:${esc(l.phone)}">${esc(l.phone)}</a></div>` : ''}
+              ${l.phone ? `<div><a href="tel:${esc(l.phone)}">${esc(l.phone)}</a> · <a href="https://wa.me/${esc((String(l.phone).replace(/\D/g,'').length===10?'91':'')+String(l.phone).replace(/\D/g,''))}" target="_blank" rel="noopener">WhatsApp</a></div>` : ''}
             </td>
             <td style="max-width:280px; white-space:normal;" title="${l.message ? esc(l.message) : ''}">${l.message ? esc(l.message.length > 140 ? l.message.slice(0, 140) + '…' : l.message) : '<span style="color:var(--ink-soft);">—</span>'}</td>
             <td>${relativeTime(l.createdAt)}</td>
