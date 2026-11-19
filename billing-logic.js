@@ -20,7 +20,36 @@ export const PLAN_LABELS = {
   erp_all_modules: 'School ERP, all modules',
   erp_all_modules_website: 'School ERP, all modules + school website',
 };
+// The five per-student plans on svmedtech.com (2026 price list). Older schools keep the three legacy plan types above.
+export const TIER_LABELS = {
+  starter: 'Starter (free up to 100 students)',
+  basic: 'Basic',
+  core: 'Core',
+  complete: 'Complete',
+  complete_website: 'Complete + Website',
+};
+export const TIER_KEYS = Object.keys(TIER_LABELS);
+export const TIER_DEFAULTS = {
+  starter: { rate: 0, min: 0, setupRate: 0, setupMin: 0 },
+  basic: { rate: 30, min: 6000, setupRate: 30, setupMin: 4000 },
+  core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 },
+  complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 },
+  complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 },
+};
+// Which ERP modules each plan switches on (the school's ERP reads plan_modules).
+const CORE_SET = ['fees', 'attendance', 'exams', 'communications'];
+export const TIER_MODULES = {
+  starter: ['fees', 'attendance', 'communications'],
+  basic: CORE_SET,
+  core: [...CORE_SET, 'timetable_homework'],
+  complete: Object.keys(MODULE_LABELS),
+  complete_website: Object.keys(MODULE_LABELS),
+};
+export const STARTER_FREE_LIMIT = 100;
+export const LEGACY_PLAN_TYPES = Object.keys(PLAN_LABELS);
+Object.assign(PLAN_LABELS, TIER_LABELS);
 export const PLAN_TYPES = Object.keys(PLAN_LABELS);
+export const isTier = p => TIER_KEYS.includes(p);
 
 export const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const num = v => (v === '' || v == null || isNaN(Number(v)) ? null : Math.max(0, r2(v)));
@@ -30,6 +59,7 @@ export function defaultBillingConfig() {
   return {
     moduleYearly: Object.fromEntries(MODULE_KEYS.map(k => [k, null])),
     setupFees: { erp_selected_modules: null, erp_all_modules: null, erp_all_modules_website: null },
+    tiers: JSON.parse(JSON.stringify(TIER_DEFAULTS)),
     gstEnabled: false,
     gstRate: 18,
     gstin: '',
@@ -46,7 +76,12 @@ export function cleanBillingConfig(input, current) {
   const i = input || {};
   const out = defaultBillingConfig();
   for (const k of MODULE_KEYS) out.moduleYearly[k] = i.moduleYearly && k in i.moduleYearly ? num(i.moduleYearly[k]) : (base.moduleYearly || {})[k] ?? null;
-  for (const p of PLAN_TYPES) out.setupFees[p] = i.setupFees && p in i.setupFees ? num(i.setupFees[p]) : (base.setupFees || {})[p] ?? null;
+  for (const t of TIER_KEYS) {
+    const bt = (base.tiers || {})[t] || TIER_DEFAULTS[t], it = (i.tiers || {})[t] || {};
+    const pick = f => (f in it ? num(it[f]) : num(bt[f]));
+    out.tiers[t] = { rate: pick('rate') ?? 0, min: pick('min') ?? 0, setupRate: pick('setupRate') ?? 0, setupMin: pick('setupMin') ?? 0 };
+  }
+  for (const p of LEGACY_PLAN_TYPES) out.setupFees[p] = i.setupFees && p in i.setupFees ? num(i.setupFees[p]) : (base.setupFees || {})[p] ?? null;
   out.gstEnabled = i.gstEnabled != null ? !!i.gstEnabled : !!base.gstEnabled;
   const rate = i.gstRate != null && i.gstRate !== '' ? Number(i.gstRate) : base.gstRate;
   out.gstRate = isNaN(rate) ? 18 : Math.min(28, Math.max(0, r2(rate)));
@@ -73,11 +108,31 @@ export function expandModules(mods) {
 // Lines for a school's plan: a one-time setup line and the yearly subscription.
 // bundle = { all, allWebsite } are the two package prices (vendor_settings default_price_* columns).
 // Anything with no price set is returned as a line with amount 0 and listed in `missing`, never guessed.
-export function priceFor({ planType, planModules, cfg, bundle, includeSetup = true, includeSubscription = true }) {
+// Per-student plans: yearly = max(minimum, rate x students); setup likewise. Needs the student count.
+export function tierAmounts(tier, students, cfg) {
+  const t = Object.assign({}, TIER_DEFAULTS[tier], ((cfg || {}).tiers || {})[tier]);
+  const n = Math.max(0, Math.floor(Number(students) || 0));
+  return { students: n, yearly: r2(Math.max(t.min, t.rate * n)), setup: r2(Math.max(t.setupMin, t.setupRate * n)), t };
+}
+const inr = n => 'Rs ' + Math.round(n).toLocaleString('en-IN');
+
+export function priceFor({ planType, planModules, cfg, bundle, includeSetup = true, includeSubscription = true, students }) {
   const c = Object.assign(defaultBillingConfig(), cfg || {});
   const lines = [], missing = [];
   const plan = PLAN_TYPES.includes(planType) ? planType : null;
   if (!plan) return { lines, missing: ['plan'], plan: null };
+  if (isTier(plan)) {
+    const n = Math.floor(Number(students) || 0);
+    if (n < 1) return { lines, missing: ['number of students'], plan };
+    if (plan === 'starter') {
+      if (n > STARTER_FREE_LIMIT) return { lines, missing: ['Starter is free only up to ' + STARTER_FREE_LIMIT + ' students; choose a paid plan'], plan };
+      return { lines, missing, plan };
+    }
+    const a = tierAmounts(plan, n, c), L = TIER_LABELS[plan];
+    if (includeSetup) lines.push({ kind: 'setup', description: 'One-time setup and onboarding, ' + L + ' (' + n + ' students x ' + inr(a.t.setupRate) + ', minimum ' + inr(a.t.setupMin) + ')', qty: 1, rate: a.setup, amount: a.setup });
+    if (includeSubscription) lines.push({ kind: 'subscription', description: 'Yearly subscription, ' + L + ' (' + n + ' students x ' + inr(a.t.rate) + ', minimum ' + inr(a.t.min) + ')', qty: 1, rate: a.yearly, amount: a.yearly });
+    return { lines, missing, plan };
+  }
   if (includeSetup) {
     const fee = (c.setupFees || {})[plan];
     if (fee == null) missing.push('setup fee');

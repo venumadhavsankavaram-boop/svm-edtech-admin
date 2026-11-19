@@ -66,4 +66,17 @@ t('settings are cleaned: bad numbers ignored, GST limited, old values kept when 
   const b = B.cleanBillingConfig({ gstEnabled: true }, a);
   assert.equal(b.moduleYearly.fees, 4000); assert.equal(b.gstEnabled, true); assert.equal(b.gstin, '22AAAAA0000A1Z5');
 });
+t('per-student plans: yearly and setup = the larger of minimum and rate x students; Starter free to 100', () => {
+  const cfg = B.cleanBillingConfig({});
+  const a = B.priceFor({ planType: 'core', cfg, students: 120 });
+  assert.deepEqual(a.lines.map(l => [l.kind, l.amount]), [['setup', 4000], ['subscription', 9000]]);
+  const b = B.priceFor({ planType: 'complete_website', cfg, students: 500 });
+  assert.deepEqual(b.lines.map(l => l.amount), [25000, 42500]);
+  assert.deepEqual(B.priceFor({ planType: 'basic', cfg, students: 500, includeSetup: false }).lines.map(l => l.amount), [15000]);
+  assert.deepEqual(B.priceFor({ planType: 'starter', cfg, students: 80 }).lines, []);
+  assert.equal(B.priceFor({ planType: 'starter', cfg, students: 150 }).missing.length, 1);
+  assert.deepEqual(B.priceFor({ planType: 'core', cfg }).missing, ['number of students']);
+  assert.equal(B.cleanBillingConfig({ tiers: { basic: { rate: 35 } } }).tiers.basic.min, 6000);
+  assert.equal(B.cleanBillingConfig({ tiers: { basic: { rate: 35 } } }).tiers.basic.rate, 35);
+});
 console.log('billing-logic: ' + n + ' passed');

@@ -520,11 +520,25 @@
         <label for="fPlanType">Plan</label>
         <select id="fPlanType">
           <option value="">— Not set —</option>
+          <optgroup label="Current plans (per student)">
+            <option value="starter">Starter (free up to 100 students)</option>
+            <option value="basic">Basic</option>
+            <option value="core">Core</option>
+            <option value="complete">Complete</option>
+            <option value="complete_website">Complete + Website</option>
+          </optgroup>
+          <optgroup label="Older plans (existing schools)">
           <option value="erp_selected_modules">ERP — Selected Modules</option>
           <option value="erp_all_modules">ERP — All Modules</option>
           <option value="erp_all_modules_website">ERP — All Modules + Website</option>
+          </optgroup>
         </select>
         <div style="font-size:0.76rem; color:var(--ink-soft); margin-top:4px;">Picking a plan fills in Billing Plan and (for the two "All Modules" plans) Billing Amount below from your saved defaults — both stay editable for a custom deal.</div>
+      </div>
+      <div class="field" id="planStudentsField" style="display:none;">
+        <label for="fPlanStudents">Number of students (the yearly fee and setup fee are worked out from this)</label>
+        <input type="number" id="fPlanStudents" min="1" step="1" placeholder="e.g. 450">
+        <div id="planStudentsHint" style="font-size:0.8rem; color:var(--ink-soft); margin-top:4px;"></div>
       </div>
       <div class="field" id="planModulesField">
         <label>Modules Included</label>
@@ -1727,10 +1741,25 @@ $('#fEnquiryDate').addEventListener('change', loadEnquiries);
 
 /* ---------- Plan / Modules (billing basis — see Plan Pricing in Account) ---------- */
 const PLAN_TYPE_LABELS = {
+  starter: 'Starter (free up to 100 students)',
+  basic: 'Basic',
+  core: 'Core',
+  complete: 'Complete',
+  complete_website: 'Complete + Website',
   erp_selected_modules: 'ERP — Selected Modules',
   erp_all_modules: 'ERP — All Modules',
   erp_all_modules_website: 'ERP — All Modules + Website',
 };
+const TIER_KEYS = ['starter', 'basic', 'core', 'complete', 'complete_website'];
+const TIER_DEFAULTS = { starter: { rate: 0, min: 0, setupRate: 0, setupMin: 0 }, basic: { rate: 30, min: 6000, setupRate: 30, setupMin: 4000 }, core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 }, complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 }, complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 } };
+const TIER_MODULES = { starter: ['fees','attendance','communications'], basic: ['fees','attendance','exams','communications'], core: ['fees','attendance','exams','communications','timetable_homework'], complete: ['fees','attendance','exams','accounting','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], complete_website: ['fees','attendance','exams','accounting','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'] };
+// Yearly and one-time setup for a per-student plan: the larger of the minimum and rate x students.
+function tierPrice(tier, n) {
+  const c = (typeof cfgNow === 'function' ? cfgNow() : {}) || {};
+  const t = Object.assign({}, TIER_DEFAULTS[tier], (c.tiers || {})[tier]);
+  n = Math.max(0, parseInt(n, 10) || 0);
+  return { yearly: Math.max(t.min, t.rate * n), setup: Math.max(t.setupMin, t.setupRate * n), t };
+}
 const PLAN_MODULE_LABELS = {
   fees: 'Fees & Payments', attendance: 'Attendance', exams: 'Exams & Marks', accounting: 'Accounting', staff_payroll: 'Staff & Payroll', inventory: 'Inventory', hostel: 'Hostel', transport: 'Transport', library: 'Library', timetable_homework: 'Timetable & Homework', communications: 'Communications', transport_library: 'Transport + Library',
 };
@@ -1745,11 +1774,24 @@ function setPlanModules(keys) {
 // (rather than hiding them) so it's visually obvious nothing was left out.
 function updatePlanModulesUI() {
   const planType = $('#fPlanType').value;
+  const isTier = TIER_KEYS.includes(planType);
   const allModules = planType === 'erp_all_modules' || planType === 'erp_all_modules_website';
+  $('#planStudentsField').style.display = isTier ? 'block' : 'none';
+  if (isTier) setPlanModules(TIER_MODULES[planType]);
   document.querySelectorAll('.plan-module-cb').forEach(cb => {
     if (allModules) cb.checked = true;
-    cb.disabled = allModules;
+    cb.disabled = allModules || isTier;
   });
+  updatePlanStudentsHint();
+}
+function updatePlanStudentsHint() {
+  const planType = $('#fPlanType').value, h = $('#planStudentsHint');
+  if (!TIER_KEYS.includes(planType)) { h.textContent = ''; return; }
+  const n = parseInt($('#fPlanStudents').value, 10) || 0;
+  if (!n) { h.textContent = ''; return; }
+  if (planType === 'starter') { h.textContent = n <= 100 ? 'Free: no setup and no yearly fee.' : 'Starter is free only up to 100 students. Choose a paid plan.'; return; }
+  const p = tierPrice(planType, n);
+  h.textContent = 'Yearly ₹' + p.yearly.toLocaleString('en-IN') + ' (₹' + p.t.rate + ' per student, minimum ₹' + p.t.min.toLocaleString('en-IN') + '). One-time setup ₹' + p.setup.toLocaleString('en-IN') + ' (₹' + p.t.setupRate + ' per student, minimum ₹' + p.t.setupMin.toLocaleString('en-IN') + ').';
 }
 // Only runs when the vendor actively changes the Plan dropdown (never on
 // modal open) — fills in a starting Billing Plan/Amount that's still fully
@@ -1758,6 +1800,11 @@ function applyPlanDefaults() {
   const planType = $('#fPlanType').value;
   if (!planType) return;
   $('#fBillingPlan').value = PLAN_TYPE_LABELS[planType] || '';
+  if (TIER_KEYS.includes(planType)) {
+    const n = parseInt($('#fPlanStudents').value, 10) || 0;
+    $('#fBillingAmount').value = n && !(planType === 'starter') ? tierPrice(planType, n).yearly : (planType === 'starter' ? 0 : '');
+    return;
+  }
   if (planType === 'erp_all_modules' && settingsCache.defaultPriceErpAllModules != null) {
     $('#fBillingAmount').value = settingsCache.defaultPriceErpAllModules;
   } else if (planType === 'erp_all_modules_website' && settingsCache.defaultPriceErpAllModulesWebsite != null) {
@@ -1769,6 +1816,7 @@ $('#fPlanType').addEventListener('change', () => {
   updatePlanModulesUI();
   applyPlanDefaults();
 });
+$('#fPlanStudents').addEventListener('input', () => { updatePlanStudentsHint(); if (TIER_KEYS.includes($('#fPlanType').value)) applyPlanDefaults(); });
 
 /* ---------- Add / Edit school modal ---------- */
 let editingSchoolId = null;
@@ -1857,7 +1905,7 @@ function openAddModal() {
   $('#schoolForm').reset();
   populateParentSchoolSelect(null);
   $('#fParentSchool').value = '';
-  $('#fPlanType').value = '';
+  $('#fPlanType').value = ''; $('#fPlanStudents').value = '';
   setPlanModules([]);
   updatePlanModulesUI();
   $('#apiKeyField').style.display = 'none';
@@ -1877,7 +1925,7 @@ function openEditModal(id) {
   $('#fSchoolName').value = s.name || '';
   populateParentSchoolSelect(id);
   $('#fParentSchool').value = s.parentSchoolId || '';
-  $('#fPlanType').value = s.planType || '';
+  $('#fPlanType').value = s.planType || ''; $('#fPlanStudents').value = s.planStudents || '';
   setPlanModules(s.planModules || []);
   updatePlanModulesUI();
   $('#fErpUrl').value = s.erpUrl || '';
@@ -1990,6 +2038,7 @@ $('#schoolForm').addEventListener('submit', async (e) => {
     name: $('#fSchoolName').value,
     parentSchoolId: $('#fParentSchool').value || null,
     planType: $('#fPlanType').value || null,
+    planStudents: TIER_KEYS.includes($('#fPlanType').value) ? ($('#fPlanStudents').value || null) : null,
     planModules: getSelectedPlanModules(),
     erpUrl: $('#fErpUrl').value,
     websiteUrl: $('#fWebsiteUrl').value,
@@ -2916,7 +2965,9 @@ makeModal('priceModalOv', `
   <div class="field" style="margin-bottom:0;"><label>How should schools pay you? (UPI ID, bank name, account number, IFSC)</label><textarea id="bz_pay" placeholder="e.g. UPI: yourname@upi&#10;Bank: ... A/c: ... IFSC: ..."></textarea></div></div>
   <div style="background:#FFF6E3; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
   <h4 style="margin:0 0 8px; color:#A85F0B;">② What you charge <span style="font-weight:400; font-size:0.8em;">(in rupees. Leave empty if not decided)</span></h4>
-  <div class="modal-sub" style="margin:0 0 6px;"><b>Every year</b> (renewal)</div>
+  <div class="modal-sub" style="margin:0 0 6px;"><b>Per-student plans</b> (the price list on svmedtech.com). Each fee = the larger of the minimum and rate x students. Starter is free up to 100 students.</div>
+  <div id="pr_tiers" style="overflow-x:auto; margin-bottom:12px;"></div>
+  <div class="modal-sub" style="margin:0 0 6px;"><b>Older plans</b> (only for schools already on them). <b>Every year</b> (renewal)</div>
   <div class="grid-2"><div class="field"><label>All modules</label><input type="number" id="pr_all" min="0" step="1"></div>
   <div class="field"><label>All modules + school website</label><input type="number" id="pr_allw" min="0" step="1"></div></div>
   <div class="modal-sub" style="margin:0 0 6px;"><b>Only once</b>, when a school joins (setup)</div>
@@ -2936,6 +2987,8 @@ makeModal('priceModalOv', `
   <div class="field" style="margin-bottom:0;"><label>Terms printed on bills (optional)</label><textarea id="pr_terms" placeholder="e.g. Please renew before the plan end date."></textarea></div></div>
   <div class="modal-error" id="pr_err"></div>
   <div class="modal-actions"><div></div><div class="right"><button type="button" class="btn btn-light" id="pr_close">Close</button><button type="button" class="btn btn-accent" id="pr_save">Save</button></div></div>`, true);
+$('#pr_tiers').innerHTML = '<table style="width:100%; font-size:0.8rem;"><thead><tr><th style="text-align:left;">Plan</th><th>Per student / year</th><th>Yearly minimum</th><th>Setup per student</th><th>Setup minimum</th></tr></thead><tbody>' +
+  TIER_KEYS.filter(k => k !== 'starter').map(k => `<tr><td>${esc(PLAN_TYPE_LABELS[k])}</td>${['rate', 'min', 'setupRate', 'setupMin'].map(f => `<td><input type="number" min="0" step="1" data-tier="${k}" data-f="${f}" style="width:100%; min-width:70px;"></td>`).join('')}</tr>`).join('') + '</tbody></table>';
 $('#pr_mods').innerHTML = PRICE_MODS.map(m => `<div class="field"><label>${esc(PLAN_MODULE_LABELS[m] || m)}</label><input type="number" min="0" data-pm="${m}"></div>`).join('');
 function openPricingModal() {
   const s = settingsCache || {}, c = cfgNow();
@@ -2944,6 +2997,7 @@ function openPricingModal() {
   $('#pr_all').value = v(s.defaultPriceErpAllModules); $('#pr_allw').value = v(s.defaultPriceErpAllModulesWebsite);
   $('#pr_su_sel').value = v(c.setupFees.erp_selected_modules); $('#pr_su_all').value = v(c.setupFees.erp_all_modules); $('#pr_su_allw').value = v(c.setupFees.erp_all_modules_website);
   document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { i.value = v(c.moduleYearly[i.dataset.pm]); });
+  document.querySelectorAll('#pr_tiers [data-tier]').forEach(i => { i.value = v(((c.tiers || {})[i.dataset.tier] || TIER_DEFAULTS[i.dataset.tier])[i.dataset.f]); });
   $('#pr_gst').checked = !!c.gstEnabled; $('#pr_rate').value = c.gstRate; $('#pr_gstin').value = c.gstin || ''; $('#pr_pan').value = c.pan || '';
   $('#pr_due').value = c.dueDays; $('#pr_qv').value = c.quoteValidityDays; $('#pr_terms').value = c.terms || '';
   $('#pr_err').style.display = 'none'; openM('priceModalOv');
@@ -2952,11 +3006,12 @@ $('#pr_close').addEventListener('click', () => closeM('priceModalOv'));
 $('#pr_save').addEventListener('click', async () => {
   const s = settingsCache || {};
   const moduleYearly = {}; document.querySelectorAll('#pr_mods [data-pm]').forEach(i => { moduleYearly[i.dataset.pm] = i.value; });
+  const tiers = {}; document.querySelectorAll('#pr_tiers [data-tier]').forEach(i => { (tiers[i.dataset.tier] = tiers[i.dataset.tier] || {})[i.dataset.f] = i.value; });
   try {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
       contactEmail: $('#bz_email').value, contactPhone: $('#bz_phone').value, contactWhatsapp: s.contactWhatsapp, companyName: $('#bz_name').value, companyAddress: $('#bz_addr').value, paymentDetails: $('#bz_pay').value,
       defaultPriceErpAllModules: $('#pr_all').value, defaultPriceErpAllModulesWebsite: $('#pr_allw').value,
-      billingConfig: { moduleYearly, setupFees: { erp_selected_modules: $('#pr_su_sel').value, erp_all_modules: $('#pr_su_all').value, erp_all_modules_website: $('#pr_su_allw').value },
+      billingConfig: { moduleYearly, tiers, setupFees: { erp_selected_modules: $('#pr_su_sel').value, erp_all_modules: $('#pr_su_all').value, erp_all_modules_website: $('#pr_su_allw').value },
         gstEnabled: $('#pr_gst').checked, gstRate: $('#pr_rate').value, gstin: $('#pr_gstin').value, pan: $('#pr_pan').value, dueDays: $('#pr_due').value, quoteValidityDays: $('#pr_qv').value, terms: $('#pr_terms').value },
     } });
     closeM('priceModalOv'); showToast('Billing setup saved.'); renderSetupHint();
@@ -3022,6 +3077,7 @@ makeModal('qtModalOv', `
   <div class="grid-2"><div class="field"><label>Phone</label><input type="text" id="qt_phone"></div><div class="field"><label>Email</label><input type="text" id="qt_email"></div></div>
   <div class="field"><label>Address</label><textarea id="qt_addr" style="min-height:44px;"></textarea></div>
   <div class="field"><label>Plan</label><select id="qt_plan"><option value="">Choose a plan…</option>${Object.entries(PLAN_TYPE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+  <div class="field" id="qt_studrow" style="display:none;"><label>Number of students</label><input type="number" id="qt_students" min="1" step="1" placeholder="e.g. 450"></div>
   <div class="field" id="qt_modsrow" style="display:none;"><label>Modules</label><div id="qt_mods" style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:0.82rem;"></div></div>
   <div style="margin-bottom:8px;"><button type="button" class="btn btn-light btn-sm" id="qt_fill">Fill from price list</button></div>
   <div id="qt_lines"></div>
@@ -3046,6 +3102,7 @@ function qtTotals() {
 function qtPlanUi() {
   const p = $('#qt_plan').value;
   $('#qt_modsrow').style.display = p === 'erp_selected_modules' ? 'block' : 'none';
+  $('#qt_studrow').style.display = TIER_KEYS.includes(p) ? 'block' : 'none';
 }
 $('#qt_plan').addEventListener('change', qtPlanUi);
 $('#qt_school').addEventListener('change', () => {
@@ -3053,14 +3110,14 @@ $('#qt_school').addEventListener('change', () => {
   const s = schoolsCache.find(x => x.id === $('#qt_school').value);
   if (!s) return;
   $('#qt_name').value = s.name; $('#qt_contact').value = s.contactName || ''; $('#qt_phone').value = s.contactPhone || ''; $('#qt_email').value = s.contactEmail || ''; $('#qt_addr').value = s.billingAddress || '';
-  if (s.planType) { $('#qt_plan').value = s.planType; qtPlanUi(); document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = (s.planModules || []).includes(cb.value) || ((s.planModules || []).includes('transport_library') && (cb.value === 'transport' || cb.value === 'library')); }); }
+  if (s.planType) { $('#qt_plan').value = s.planType; if (s.planStudents) $('#qt_students').value = s.planStudents; qtPlanUi(); document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = (s.planModules || []).includes(cb.value) || ((s.planModules || []).includes('transport_library') && (cb.value === 'transport' || cb.value === 'library')); }); }
 });
 $('#qt_fill').addEventListener('click', async () => {
   const planType = $('#qt_plan').value;
   if (!planType) { showErr($('#qt_err'), 'Choose a plan first.'); return; }
   try {
     const planModules = Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value);
-    const r = await api('/api/billing/price-preview', { method: 'POST', body: { planType, planModules } });
+    const r = await api('/api/billing/price-preview', { method: 'POST', body: { planType, planModules, students: $('#qt_students').value || undefined } });
     qtEditor.set(r.lines);
     if (r.missing.length) showErr($('#qt_err'), 'Prices not set in Billing setup for: ' + r.missing.join(', ') + '. Those items are at ₹0, so edit them here.');
     else $('#qt_err').style.display = 'none';
@@ -3073,7 +3130,7 @@ function openQuoteModal(q) {
   $('#qt_school').innerHTML = '<option value="">— New prospect —</option>' + schoolsCache.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   $('#qt_school').value = q && q.schoolId ? q.schoolId : '';
   $('#qt_name').value = q ? q.partyName || '' : ''; $('#qt_contact').value = q ? q.partyContact || '' : ''; $('#qt_phone').value = q ? q.partyPhone || '' : ''; $('#qt_email').value = q ? q.partyEmail || '' : ''; $('#qt_addr').value = q ? q.partyAddress || '' : '';
-  $('#qt_plan').value = q ? q.planType || '' : ''; qtPlanUi();
+  $('#qt_plan').value = q ? q.planType || '' : ''; $('#qt_students').value = ''; qtPlanUi();
   document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = !!(q && (q.planModules || []).includes(cb.value)); });
   fillItemPicker('qt_pick', $('#qt_school').value);
   qtEditor.set(q ? q.lines : []);
@@ -3092,7 +3149,7 @@ $('#qt_save').addEventListener('click', async () => {
   const on = $('#qt_gst').checked;
   const body = {
     schoolId: $('#qt_school').value || null, partyName: $('#qt_name').value, partyContact: $('#qt_contact').value, partyPhone: $('#qt_phone').value, partyEmail: $('#qt_email').value, partyAddress: $('#qt_addr').value,
-    planType: $('#qt_plan').value || undefined, planModules: Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value),
+    planType: $('#qt_plan').value || undefined, students: $('#qt_students').value || undefined, planModules: Array.from(document.querySelectorAll('.qt-mod:checked')).map(c => c.value),
     lines: qtEditor.get(), discount: $('#qt_disc').value || 0, validUntil: $('#qt_valid').value || undefined, gstApplicable: on, gstRate: on ? $('#qt_rate').value : null, notes: $('#qt_notes').value,
   };
   if (editingQuote) body.status = $('#qt_status').value;
@@ -3160,6 +3217,11 @@ $('#sb_save').addEventListener('click', async () => {
 
 /* ================= Onboard a new school: guided wizard (package -> details -> bill -> hand-over) ================= */
 const OB_PLANS = [
+  ['starter', '🌱', 'Starter', 'Free up to 100 students. Records, attendance and notices. No setup charge.'],
+  ['basic', '📘', 'Basic', 'Starter plus full fee collection, exams and report cards, parent login.'],
+  ['core', '📗', 'Core', 'Basic plus teacher app, timetable and homework. The most popular.'],
+  ['complete', '🏫', 'Complete', 'Every module (accounting, payroll, transport, hostel, library, inventory) and the parent app.'],
+  ['complete_website', '🌐', 'Complete + Website', 'Everything in Complete, plus the school website and managed backups.'],
   ['erp_all_modules_website', '🌐', 'Website + complete ERP', 'The school website and every ERP module. The usual package.'],
   ['erp_all_modules', '🏫', 'Complete ERP only', 'Every ERP module, no website.'],
   ['erp_selected_modules', '🧩', 'ERP with chosen modules', 'Only the modules the school pays for. The rest stay hidden.'],
@@ -3173,10 +3235,11 @@ makeModal('obModalOv', `
   <div class="modal-actions"><div><button type="button" class="btn btn-light" id="ob_back">Back</button></div>
     <div class="right"><button type="button" class="btn btn-light" id="ob_close">Close</button><button type="button" class="btn btn-accent" id="ob_next">Next</button></div></div>`, true);
 function obPlanCode() {
+  if (TIER_KEYS.includes(OB.planType)) return OB.planType;
   return OB.planType === 'erp_all_modules_website' ? 'all_website' : OB.planType === 'erp_all_modules' ? 'all' : 'selected:' + OB.modules.join(',');
 }
 async function obPreview() {
-  try { OB.preview = await api('/api/billing/price-preview', { method: 'POST', body: { planType: OB.planType, planModules: OB.modules } }); }
+  try { OB.preview = await api('/api/billing/price-preview', { method: 'POST', body: { planType: OB.planType, planModules: OB.modules, students: OB.students || undefined } }); }
   catch (e) { OB.preview = null; }
 }
 function obDraw() {
@@ -3189,12 +3252,13 @@ function obDraw() {
   if (OB.step === 0) {
     b.innerHTML = '<p class="modal-sub">What did the school choose? Everything after this fills itself in from your answer.</p>' +
       OB_PLANS.map(p => `<div data-obp="${p[0]}" style="cursor:pointer; border:2px solid ${OB.planType === p[0] ? '#A85F0B' : '#E3E5EF'}; background:${OB.planType === p[0] ? '#FFF6E3' : '#fff'}; border-radius:12px; padding:12px 14px; margin-bottom:10px;"><b>${p[1]} ${p[2]}</b><div class="modal-sub" style="margin:2px 0 0;">${p[3]}</div></div>`).join('') +
+      (TIER_KEYS.includes(OB.planType) ? '<div class="field"><label>How many students does the school have? (the fees are worked out from this)</label><input type="number" id="ob_students" min="1" value="' + esc(OB.students || '') + '"><div class="modal-sub" style="margin:4px 0 0;">Modules switch on by themselves for this plan: ' + TIER_MODULES[OB.planType].map(m => esc(PLAN_MODULE_LABELS[m] || m)).join(', ') + '.</div></div>' : '') +
       (OB.planType === 'erp_selected_modules' ? '<div class="field"><label>Tick the modules they bought (Students, fees basics, reports and users are always included)</label><div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; font-size:0.85rem;">' +
         PRICE_MODS.map(m => `<label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" data-obm="${m}" ${OB.modules.includes(m) ? 'checked' : ''} style="width:auto;"> ${esc(PLAN_MODULE_LABELS[m] || m)}</label>`).join('') + '</div></div>' : '');
     b.querySelectorAll('[data-obp]').forEach(el => el.addEventListener('click', () => { OB.planType = el.dataset.obp; if (OB.planType === 'erp_selected_modules' && !OB.modules.length) OB.modules = ['fees']; obDraw(); }));
     b.querySelectorAll('[data-obm]').forEach(el => el.addEventListener('change', () => { OB.modules = Array.from(b.querySelectorAll('[data-obm]:checked')).map(x => x.dataset.obm); }));
   } else if (OB.step === 1) {
-    const hasWeb = OB.planType === 'erp_all_modules_website';
+    const hasWeb = OB.planType === 'erp_all_modules_website' || OB.planType === 'complete_website';
     b.innerHTML = `<div class="field"><label>School name *</label><input type="text" id="ob_name" value="${esc(OB.name)}" placeholder="Sunrise Public School"></div>
       <div class="grid-2"><div class="field"><label>Contact person</label><input type="text" id="ob_cname" value="${esc(OB.cname)}"></div><div class="field"><label>Phone</label><input type="text" id="ob_phone" value="${esc(OB.phone)}"></div></div>
       <div class="grid-2"><div class="field"><label>Email</label><input type="text" id="ob_email" value="${esc(OB.email)}"></div><div class="field"><label>School GSTIN (if any)</label><input type="text" id="ob_gstin" value="${esc(OB.gstin)}"></div></div>
@@ -3234,7 +3298,7 @@ function obDraw() {
   }
 }
 function openOnboard() {
-  OB = { step: 0, planType: 'erp_all_modules_website', modules: [], name: '', cname: '', phone: '', email: '', gstin: '', addr: '', erpUrl: '', webUrl: '', yearly: null, bill: 'invoice', preview: null, result: null };
+  OB = { step: 0, students: '', planType: 'complete_website', modules: [], name: '', cname: '', phone: '', email: '', gstin: '', addr: '', erpUrl: '', webUrl: '', yearly: null, bill: 'invoice', preview: null, result: null };
   obDraw(); openM('obModalOv');
 }
 $('#btnOnboard').addEventListener('click', openOnboard);
@@ -3242,6 +3306,7 @@ $('#ob_close').addEventListener('click', () => closeM('obModalOv'));
 $('#ob_back').addEventListener('click', () => { if (OB.step > 0) { obCollect(); OB.step--; obDraw(); } });
 function obCollect() {
   const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
+  if (OB.step === 0) { const st = g('ob_students'); if (st != null) OB.students = st; }
   if (OB.step === 1) { OB.name = g('ob_name'); OB.cname = g('ob_cname'); OB.phone = g('ob_phone'); OB.email = g('ob_email'); OB.gstin = g('ob_gstin'); OB.addr = g('ob_addr'); OB.erpUrl = g('ob_erpurl') || ''; const w = g('ob_weburl'); OB.webUrl = w || ''; }
   if (OB.step === 2) { OB.yearly = g('ob_yearly'); const r = document.querySelector('input[name="ob_bill"]:checked'); if (r) OB.bill = r.value; }
 }
@@ -3251,6 +3316,8 @@ $('#ob_next').addEventListener('click', async () => {
     obCollect();
     if (OB.step === 0) {
       if (OB.planType === 'erp_selected_modules' && !OB.modules.length) throw new Error('Tick at least one module.');
+      if (TIER_KEYS.includes(OB.planType) && !(parseInt(OB.students, 10) > 0)) throw new Error('Type the number of students.');
+      if (OB.planType === 'starter' && parseInt(OB.students, 10) > 100) throw new Error('Starter is free only up to 100 students. Choose a paid plan.');
       OB.step = 1; obDraw();
     } else if (OB.step === 1) {
       if (!OB.name) throw new Error('Type the school name.');
@@ -3260,7 +3327,7 @@ $('#ob_next').addEventListener('click', async () => {
       const yearly = Number(OB.yearly) || 0;
       const school = await api('/api/schools', { method: 'POST', body: {
         name: OB.name, status: 'temporary', erpUrl: OB.erpUrl || null, websiteUrl: OB.webUrl || null, contactName: OB.cname, contactPhone: OB.phone, contactEmail: OB.email,
-        planType: OB.planType, planModules: OB.planType === 'erp_selected_modules' ? OB.modules : [],
+        planType: OB.planType, planStudents: TIER_KEYS.includes(OB.planType) ? OB.students : undefined, planModules: OB.planType === 'erp_selected_modules' ? OB.modules : [],
         billingPlan: OB_PLANS.find(p => p[0] === OB.planType)[2], billingAmount: yearly || null, billingCycle: 'annual',
       } });
       if (OB.addr || OB.gstin) await api('/api/schools/' + school.id + '/billing-info', { method: 'PUT', body: { billingAddress: OB.addr, schoolGstin: OB.gstin } });
@@ -3274,7 +3341,7 @@ $('#ob_next').addEventListener('click', async () => {
         if (yearly > 0) lines.push({ kind: 'subscription', description: 'Yearly subscription (' + OB_PLANS.find(p => p[0] === OB.planType)[2] + ')', qty: 1, rate: yearly });
         if (!lines.length) throw new Error('There is nothing to bill yet. Type the agreed yearly amount, or choose "Nothing yet". (The school was created.)');
         if (OB.bill === 'invoice') result.invoice = await api('/api/invoices', { method: 'POST', body: { schoolId: school.id, description: 'New school setup and first year', lines } });
-        else result.quote = await api('/api/quotes', { method: 'POST', body: { schoolId: school.id, planType: OB.planType, planModules: OB.modules, lines } });
+        else result.quote = await api('/api/quotes', { method: 'POST', body: { schoolId: school.id, planType: OB.planType, students: OB.students || undefined, planModules: OB.modules, lines } });
       }
       OB.result = result; OB.step = 3; obDraw();
       refreshBilling().catch(() => {}); loadAll().catch(() => {});

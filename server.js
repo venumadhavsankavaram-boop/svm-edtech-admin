@@ -234,6 +234,7 @@ async function ensureSchema() {
   // — for the two "all modules" plan types it's implied/informational
   // (every key), for 'erp_selected_modules' it's the actual pick.
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_type TEXT`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_students INTEGER`;
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_modules JSONB NOT NULL DEFAULT '[]'`;
   // A manual, vendor-triggered access cutoff for non-payment — never
   // automatic (see suspend/restore routes below). When true, that school's
@@ -506,7 +507,7 @@ async function ensureSchema() {
 // a starting point (see PUT/POST /api/schools below have no server-side
 // auto-fill — that happens client-side so the vendor sees it before saving
 // and can still hand-edit it for a custom deal).
-const PLAN_TYPES = ['erp_selected_modules', 'erp_all_modules', 'erp_all_modules_website'];
+const PLAN_TYPES = BL.PLAN_TYPES; // 3 legacy types + the 5 per-student plans (starter, basic, core, complete, complete_website)
 const PLAN_MODULE_KEYS = ['fees', 'attendance', 'exams', 'accounting', 'staff_payroll', 'inventory', 'hostel', 'transport', 'library', 'timetable_homework', 'communications', 'transport_library'];
 await ensureSchema();
 
@@ -851,6 +852,7 @@ function shapeSchool(row, errorCount24h) {
     renderServiceId: row.render_service_id,
     parentSchoolId: row.parent_school_id,
     planType: row.plan_type,
+    planStudents: row.plan_students != null ? Number(row.plan_students) : null,
     planModules: row.plan_modules || [],
     planValidUntil: row.plan_valid_until ? String(row.plan_valid_until instanceof Date ? row.plan_valid_until.toISOString() : row.plan_valid_until).slice(0, 10) : null,
     billingAddress: row.billing_address || null,
@@ -862,6 +864,8 @@ function shapeSchool(row, errorCount24h) {
     websitePlace: row.website_place,
   };
 }
+
+function cleanStudents(v) { const n = parseInt(v, 10); return v === '' || v == null || isNaN(n) || n < 1 ? null : Math.min(n, 100000); }
 
 // Shared by POST /api/schools and PUT /api/schools/:id. Returns { planType,
 // planModules } (both normalized/validated) or throws a 400-worthy message.
@@ -876,6 +880,7 @@ function normalizePlanFields(planType, planModules) {
   if (finalPlanType === 'erp_all_modules' || finalPlanType === 'erp_all_modules_website') {
     finalModules = [...PLAN_MODULE_KEYS];
   }
+  if (finalPlanType && BL.isTier(finalPlanType)) finalModules = [...BL.TIER_MODULES[finalPlanType]];
   return { planType: finalPlanType, planModules: finalModules };
 }
 
@@ -919,7 +924,7 @@ app.post('/api/schools', async (req, res) => {
     const {
       name, erpUrl, websiteUrl, status, notes, onboardedDate,
       billingPlan, billingAmount, billingCycle, contactName, contactEmail, contactPhone,
-      renderServiceId, parentSchoolId, planType, planModules, showOnWebsite, websitePlace,
+      renderServiceId, parentSchoolId, planType, planModules, planStudents, showOnWebsite, websitePlace,
     } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'School name is required.' });
     const parentErr = await validateParentSchoolId(parentSchoolId || null, null);
@@ -933,13 +938,13 @@ app.post('/api/schools', async (req, res) => {
       INSERT INTO schools (
         id, name, erp_url, website_url, status, notes, api_key, onboarded_date,
         billing_plan, billing_amount, billing_cycle, contact_name, contact_email, contact_phone,
-        render_service_id, parent_school_id, plan_type, plan_modules, show_on_website, website_place
+        render_service_id, parent_school_id, plan_type, plan_modules, plan_students, show_on_website, website_place
       )
       VALUES (
         ${id}, ${String(name).trim()}, ${erpUrl || null}, ${websiteUrl || null}, ${status || 'temporary'}, ${notes || null}, ${apiKey}, ${onboardedDate || null},
         ${billingPlan || null}, ${billingAmount != null && billingAmount !== '' ? Number(billingAmount) : null}, ${billingCycle || null},
         ${contactName || null}, ${contactEmail || null}, ${contactPhone || null}, ${renderServiceId ? String(renderServiceId).trim() : null},
-        ${parentSchoolId || null}, ${normalizedPlan.planType}, ${JSON.stringify(normalizedPlan.planModules)},
+        ${parentSchoolId || null}, ${normalizedPlan.planType}, ${JSON.stringify(normalizedPlan.planModules)}, ${cleanStudents(planStudents)},
         ${showOnWebsite === true}, ${websitePlace ? String(websitePlace).trim().slice(0, 80) : null}
       )
     `;
@@ -960,7 +965,7 @@ app.put('/api/schools/:id', async (req, res) => {
     const {
       name, erpUrl, websiteUrl, status, notes, onboardedDate,
       billingPlan, billingAmount, billingCycle, contactName, contactEmail, contactPhone,
-      renderServiceId, parentSchoolId, planType, planModules, showOnWebsite, websitePlace,
+      renderServiceId, parentSchoolId, planType, planModules, planStudents, showOnWebsite, websitePlace,
     } = req.body || {};
     // parentSchoolId: undefined means "not sent, leave as-is"; '' or null
     // means "clear it"; anything else is a candidate parent id to validate.
@@ -1000,6 +1005,7 @@ app.put('/api/schools/:id', async (req, res) => {
         parent_school_id = ${nextParentSchoolId},
         plan_type = ${nextPlanType},
         plan_modules = ${JSON.stringify(nextPlanModules)},
+        plan_students = ${planStudents !== undefined ? cleanStudents(planStudents) : cur.plan_students},
         show_on_website = ${showOnWebsite !== undefined ? showOnWebsite === true : !!cur.show_on_website},
         website_place = ${websitePlace !== undefined ? (String(websitePlace || '').trim().slice(0, 80) || null) : cur.website_place}
       WHERE id = ${id}
@@ -1490,12 +1496,13 @@ app.post('/api/billing/price-preview', async (req, res) => {
     const { cfg, bundle } = await getBillingSettings();
     let planType = b.planType, planModules = b.planModules;
     if (b.schoolId) {
-      const s = (await sql`SELECT plan_type, plan_modules FROM schools WHERE id = ${b.schoolId}`)[0];
+      const s = (await sql`SELECT plan_type, plan_modules, plan_students FROM schools WHERE id = ${b.schoolId}`)[0];
       if (!s) return res.status(404).json({ error: 'School not found.' });
       if (!planType) planType = s.plan_type;
+      if (b.students == null || b.students === '') b.students = s.plan_students;
       if (!planModules) planModules = s.plan_modules || [];
     }
-    const p = BL.priceFor({ planType, planModules, cfg, bundle, includeSetup: b.includeSetup !== false, includeSubscription: b.includeSubscription !== false });
+    const p = BL.priceFor({ planType, planModules, cfg, bundle, includeSetup: b.includeSetup !== false, includeSubscription: b.includeSubscription !== false, students: b.students });
     const fig = figures({ lines: p.lines, discount: b.discount, cfg });
     return res.status(200).json({ planType: p.plan, lines: fig.lines, missing: p.missing, totals: fig.totals, gstApplicable: fig.gstApplicable, gstRate: fig.gstRate });
   } catch (err) {
@@ -1520,8 +1527,8 @@ app.post('/api/schools/:id/renewal-invoice', async (req, res) => {
       lines = [{ kind: 'subscription', description: 'Yearly renewal' + (school.billing_plan ? ' (' + school.billing_plan + ')' : ''), qty: 1, rate: agreed, amount: agreed }];
     } else {
       if (!school.plan_type) return res.status(400).json({ error: "Set this school's plan (or its billing amount) first." });
-      const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false });
-      if (p.missing.length) return res.status(400).json({ error: 'Set these prices in Billing setup first: ' + p.missing.join(', ') + '.' });
+      const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false, students: (req.body || {}).students != null && req.body.students !== '' ? req.body.students : school.plan_students });
+      if (p.missing.length) return res.status(400).json({ error: 'Cannot price the renewal yet, please set: ' + p.missing.join(', ') + '.' });
       lines = p.lines;
     }
     const b = req.body || {};
@@ -1574,11 +1581,12 @@ app.post('/api/quotes', async (req, res) => {
     const party = await quoteParty(b, null);
     if (!party.partyName) return res.status(400).json({ error: 'Please choose a school or type the name of the school you are quoting.' });
     let planType = b.planType, planModules = b.planModules;
-    if (party.schoolId && (!planType)) { const s = (await sql`SELECT plan_type, plan_modules FROM schools WHERE id = ${party.schoolId}`)[0]; planType = s.plan_type; planModules = planModules || s.plan_modules || []; }
+    if (party.schoolId && (!planType)) { const s = (await sql`SELECT plan_type, plan_modules, plan_students FROM schools WHERE id = ${party.schoolId}`)[0]; planType = s.plan_type; if (b.students == null || b.students === '') b.students = s.plan_students; planModules = planModules || s.plan_modules || []; }
     let lines = b.lines;
     if (!Array.isArray(lines) || !lines.length) {
-      const p = BL.priceFor({ planType, planModules, cfg, bundle });
+      const p = BL.priceFor({ planType, planModules, cfg, bundle, students: b.students });
       if (!p.plan) return res.status(400).json({ error: 'Please choose the plan to quote.' });
+      if (!p.lines.length && p.missing.length) return res.status(400).json({ error: 'Cannot price this plan yet: ' + p.missing.join(', ') + '.' });
       lines = p.lines;
     }
     const fig = figures({ lines, discount: b.discount, gstApplicable: b.gstApplicable, gstRate: b.gstRate, cfg });
