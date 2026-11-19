@@ -539,6 +539,8 @@
         <label for="fPlanStudents">Number of students (the yearly fee and setup fee are worked out from this)</label>
         <input type="number" id="fPlanStudents" min="1" step="1" placeholder="e.g. 450">
         <div id="planStudentsHint" style="font-size:0.8rem; color:var(--ink-soft); margin-top:4px;"></div>
+        <label style="display:flex; gap:8px; align-items:center; font-size:0.85rem; margin-top:8px;"><input type="checkbox" id="fStudentsAuto" style="width:auto;" checked> Bill from the number of active students the school's ERP reports (automatic)</label>
+        <div id="reportedStudentsNote" style="font-size:0.8rem; color:var(--ink-soft); margin-top:4px;"></div>
       </div>
       <div class="field" id="planModulesField">
         <label>Modules Included</label>
@@ -1905,7 +1907,7 @@ function openAddModal() {
   $('#schoolForm').reset();
   populateParentSchoolSelect(null);
   $('#fParentSchool').value = '';
-  $('#fPlanType').value = ''; $('#fPlanStudents').value = '';
+  $('#fPlanType').value = ''; $('#fPlanStudents').value = ''; $('#fStudentsAuto').checked = true; $('#reportedStudentsNote').textContent = '';
   setPlanModules([]);
   updatePlanModulesUI();
   $('#apiKeyField').style.display = 'none';
@@ -1926,6 +1928,8 @@ function openEditModal(id) {
   populateParentSchoolSelect(id);
   $('#fParentSchool').value = s.parentSchoolId || '';
   $('#fPlanType').value = s.planType || ''; $('#fPlanStudents').value = s.planStudents || '';
+  $('#fStudentsAuto').checked = s.studentsAuto !== false;
+  $('#reportedStudentsNote').textContent = s.reportedStudents != null ? "The school's ERP reports " + s.reportedStudents + ' active students' + (s.reportedStudentsAt ? ' (updated ' + new Date(s.reportedStudentsAt).toLocaleString('en-IN') + ')' : '') + '. The typed number above is used only when automatic is off, or until the ERP has reported.' : "The ERP has not reported a student count yet (it does so every few minutes once it has the latest ERP update). The typed number above is used until then.";
   setPlanModules(s.planModules || []);
   updatePlanModulesUI();
   $('#fErpUrl').value = s.erpUrl || '';
@@ -2039,6 +2043,7 @@ $('#schoolForm').addEventListener('submit', async (e) => {
     parentSchoolId: $('#fParentSchool').value || null,
     planType: $('#fPlanType').value || null,
     planStudents: TIER_KEYS.includes($('#fPlanType').value) ? ($('#fPlanStudents').value || null) : null,
+    studentsAuto: $('#fStudentsAuto').checked,
     planModules: getSelectedPlanModules(),
     erpUrl: $('#fErpUrl').value,
     websiteUrl: $('#fWebsiteUrl').value,
@@ -3110,7 +3115,7 @@ $('#qt_school').addEventListener('change', () => {
   const s = schoolsCache.find(x => x.id === $('#qt_school').value);
   if (!s) return;
   $('#qt_name').value = s.name; $('#qt_contact').value = s.contactName || ''; $('#qt_phone').value = s.contactPhone || ''; $('#qt_email').value = s.contactEmail || ''; $('#qt_addr').value = s.billingAddress || '';
-  if (s.planType) { $('#qt_plan').value = s.planType; if (s.planStudents) $('#qt_students').value = s.planStudents; qtPlanUi(); document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = (s.planModules || []).includes(cb.value) || ((s.planModules || []).includes('transport_library') && (cb.value === 'transport' || cb.value === 'library')); }); }
+  if (s.planType) { $('#qt_plan').value = s.planType; if (s.billingStudents) $('#qt_students').value = s.billingStudents; qtPlanUi(); document.querySelectorAll('.qt-mod').forEach(cb => { cb.checked = (s.planModules || []).includes(cb.value) || ((s.planModules || []).includes('transport_library') && (cb.value === 'transport' || cb.value === 'library')); }); }
 });
 $('#qt_fill').addEventListener('click', async () => {
   const planType = $('#qt_plan').value;

@@ -235,6 +235,10 @@ async function ensureSchema() {
   // (every key), for 'erp_selected_modules' it's the actual pick.
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_type TEXT`;
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_students INTEGER`;
+  // Active students as last reported by the school's own ERP (every heartbeat). students_auto = bill from that count.
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS reported_students INTEGER`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS reported_students_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS students_auto BOOLEAN NOT NULL DEFAULT true`;
   await sql`ALTER TABLE schools ADD COLUMN IF NOT EXISTS plan_modules JSONB NOT NULL DEFAULT '[]'`;
   // A manual, vendor-triggered access cutoff for non-payment — never
   // automatic (see suspend/restore routes below). When true, that school's
@@ -853,6 +857,10 @@ function shapeSchool(row, errorCount24h) {
     parentSchoolId: row.parent_school_id,
     planType: row.plan_type,
     planStudents: row.plan_students != null ? Number(row.plan_students) : null,
+    reportedStudents: row.reported_students != null ? Number(row.reported_students) : null,
+    reportedStudentsAt: row.reported_students_at || null,
+    studentsAuto: row.students_auto !== false,
+    billingStudents: effectiveStudents(row),
     planModules: row.plan_modules || [],
     planValidUntil: row.plan_valid_until ? String(row.plan_valid_until instanceof Date ? row.plan_valid_until.toISOString() : row.plan_valid_until).slice(0, 10) : null,
     billingAddress: row.billing_address || null,
@@ -865,6 +873,13 @@ function shapeSchool(row, errorCount24h) {
   };
 }
 
+// The student count a school is billed on: the ERP's own active count when "automatic" is on and it has reported,
+// otherwise the number typed in by hand.
+function effectiveStudents(row) {
+  if (!row) return null;
+  if (row.students_auto !== false && row.reported_students != null) return Number(row.reported_students);
+  return row.plan_students != null ? Number(row.plan_students) : null;
+}
 function cleanStudents(v) { const n = parseInt(v, 10); return v === '' || v == null || isNaN(n) || n < 1 ? null : Math.min(n, 100000); }
 
 // Shared by POST /api/schools and PUT /api/schools/:id. Returns { planType,
@@ -965,7 +980,7 @@ app.put('/api/schools/:id', async (req, res) => {
     const {
       name, erpUrl, websiteUrl, status, notes, onboardedDate,
       billingPlan, billingAmount, billingCycle, contactName, contactEmail, contactPhone,
-      renderServiceId, parentSchoolId, planType, planModules, planStudents, showOnWebsite, websitePlace,
+      renderServiceId, parentSchoolId, planType, planModules, planStudents, studentsAuto, showOnWebsite, websitePlace,
     } = req.body || {};
     // parentSchoolId: undefined means "not sent, leave as-is"; '' or null
     // means "clear it"; anything else is a candidate parent id to validate.
@@ -1006,6 +1021,7 @@ app.put('/api/schools/:id', async (req, res) => {
         plan_type = ${nextPlanType},
         plan_modules = ${JSON.stringify(nextPlanModules)},
         plan_students = ${planStudents !== undefined ? cleanStudents(planStudents) : cur.plan_students},
+        students_auto = ${studentsAuto !== undefined ? studentsAuto !== false : cur.students_auto !== false},
         show_on_website = ${showOnWebsite !== undefined ? showOnWebsite === true : !!cur.show_on_website},
         website_place = ${websitePlace !== undefined ? (String(websitePlace || '').trim().slice(0, 80) || null) : cur.website_place}
       WHERE id = ${id}
@@ -1496,10 +1512,10 @@ app.post('/api/billing/price-preview', async (req, res) => {
     const { cfg, bundle } = await getBillingSettings();
     let planType = b.planType, planModules = b.planModules;
     if (b.schoolId) {
-      const s = (await sql`SELECT plan_type, plan_modules, plan_students FROM schools WHERE id = ${b.schoolId}`)[0];
+      const s = (await sql`SELECT plan_type, plan_modules, plan_students, reported_students, students_auto FROM schools WHERE id = ${b.schoolId}`)[0];
       if (!s) return res.status(404).json({ error: 'School not found.' });
       if (!planType) planType = s.plan_type;
-      if (b.students == null || b.students === '') b.students = s.plan_students;
+      if (b.students == null || b.students === '') b.students = effectiveStudents(s);
       if (!planModules) planModules = s.plan_modules || [];
     }
     const p = BL.priceFor({ planType, planModules, cfg, bundle, includeSetup: b.includeSetup !== false, includeSubscription: b.includeSubscription !== false, students: b.students });
@@ -1512,41 +1528,65 @@ app.post('/api/billing/price-preview', async (req, res) => {
 });
 
 // ----- Renewal: one click per onboarded school -----
+// Builds one renewal invoice for a school. Returns { invoice } or { error, status }. Used by the button and by the daily automatic run.
+async function buildRenewal(school, opts = {}) {
+  if (school.billing_cycle === 'monthly') return { status: 400, error: 'This school is billed monthly. Use Generate Invoices for monthly invoices.' };
+  const { cfg, bundle } = await getBillingSettings();
+  const term = BL.nextTerm({ planValidUntil: dayStr(school.plan_valid_until), today: istToday() });
+  const open = await sql`SELECT invoice_number FROM vendor_invoices WHERE school_id = ${school.id} AND term_start = ${term.termStart} AND status <> 'cancelled' LIMIT 1`;
+  if (open.length) return { status: 409, error: 'A renewal invoice for this term already exists (' + open[0].invoice_number + ').' };
+  let lines;
+  const agreed = school.billing_amount != null ? Number(school.billing_amount) : 0;
+  const tier = BL.isTier(school.plan_type);
+  if (agreed > 0 && !tier) {
+    lines = [{ kind: 'subscription', description: 'Yearly renewal' + (school.billing_plan ? ' (' + school.billing_plan + ')' : ''), qty: 1, rate: agreed, amount: agreed }];
+  } else {
+    if (!school.plan_type) return { status: 400, error: "Set this school's plan (or its billing amount) first." };
+    const students = opts.students != null && opts.students !== '' ? opts.students : effectiveStudents(school);
+    const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false, students });
+    if (p.missing.length) return { status: 400, error: 'Cannot price the renewal yet, please set: ' + p.missing.join(', ') + '.' };
+    lines = p.lines;
+  }
+  const fig = figures({ lines, discount: opts.discount, cfg });
+  if (!(fig.totals.total > 0)) return { status: 400, error: 'The renewal amount is zero. Set prices first.' };
+  const id = await insertInvoice({
+    school, description: 'Yearly renewal, ' + term.termStart + ' to ' + term.termEnd, fig,
+    dueDate: BL.addDays(istToday(), cfg.dueDays), notes: opts.notes, source: opts.auto ? 'auto-renewal' : 'renewal', termStart: term.termStart, termEnd: term.termEnd,
+  });
+  return { invoice: (await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0] };
+}
+
 app.post('/api/schools/:id/renewal-invoice', async (req, res) => {
   try {
     const school = (await sql`SELECT * FROM schools WHERE id = ${req.params.id}`)[0];
     if (!school) return res.status(404).json({ error: 'School not found.' });
-    if (school.billing_cycle === 'monthly') return res.status(400).json({ error: 'This school is billed monthly. Use Generate Invoices for monthly invoices.' });
-    const { cfg, bundle } = await getBillingSettings();
-    const term = BL.nextTerm({ planValidUntil: dayStr(school.plan_valid_until), today: istToday() });
-    const open = await sql`SELECT invoice_number FROM vendor_invoices WHERE school_id = ${school.id} AND term_start = ${term.termStart} AND status <> 'cancelled' LIMIT 1`;
-    if (open.length) return res.status(409).json({ error: 'A renewal invoice for this term already exists (' + open[0].invoice_number + ').' });
-    let lines;
-    const agreed = school.billing_amount != null ? Number(school.billing_amount) : 0;
-    if (agreed > 0) {
-      lines = [{ kind: 'subscription', description: 'Yearly renewal' + (school.billing_plan ? ' (' + school.billing_plan + ')' : ''), qty: 1, rate: agreed, amount: agreed }];
-    } else {
-      if (!school.plan_type) return res.status(400).json({ error: "Set this school's plan (or its billing amount) first." });
-      const p = BL.priceFor({ planType: school.plan_type, planModules: school.plan_modules || [], cfg, bundle, includeSetup: false, students: (req.body || {}).students != null && req.body.students !== '' ? req.body.students : school.plan_students });
-      if (p.missing.length) return res.status(400).json({ error: 'Cannot price the renewal yet, please set: ' + p.missing.join(', ') + '.' });
-      lines = p.lines;
-    }
     const b = req.body || {};
-    const fig = figures({ lines, discount: b.discount, cfg });
-    if (!(fig.totals.total > 0)) return res.status(400).json({ error: 'The renewal amount is zero. Set prices first.' });
-    const fy = term.termStart.slice(0, 4) + '-' + String((Number(term.termStart.slice(0, 4)) + 1) % 100).padStart(2, '0');
-    const id = await insertInvoice({
-      school, description: 'Yearly renewal, ' + term.termStart + ' to ' + term.termEnd, fig,
-      dueDate: BL.addDays(istToday(), cfg.dueDays), notes: b.notes, source: 'renewal', termStart: term.termStart, termEnd: term.termEnd,
-    });
-    void fy;
-    const row = (await sql`SELECT * FROM vendor_invoices WHERE id = ${id}`)[0];
-    return res.status(201).json(shapeInvoice(row));
+    const r = await buildRenewal(school, { students: b.students, discount: b.discount, notes: b.notes });
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    return res.status(201).json(shapeInvoice(r.invoice));
   } catch (err) {
     console.error('renewal invoice error:', err);
     return res.status(500).json({ error: 'Something went wrong on the server.' });
   }
 });
+
+// Daily automatic renewals: every yearly-billed school on a per-student plan whose term ends within 30 days
+// (or has ended) and has no bill for the next term gets one, worked out from its reported student count.
+// It only creates the bill (unpaid). It never sends anything to the school and never suspends anyone.
+async function runAutoRenewals() {
+  const out = [];
+  const schools = await sql`SELECT * FROM schools WHERE plan_type IS NOT NULL AND plan_valid_until IS NOT NULL AND (billing_cycle IS NULL OR billing_cycle <> 'monthly')`;
+  for (const school of schools) {
+    if (!BL.isTier(school.plan_type) || school.plan_type === 'starter') continue;
+    const daysLeft = Math.floor((new Date(dayStr(school.plan_valid_until) + 'T00:00:00Z') - new Date(istToday() + 'T00:00:00Z')) / 86400000);
+    if (daysLeft > 30) continue;
+    try {
+      const r = await buildRenewal(school, { auto: true, notes: 'Created automatically from ' + (effectiveStudents(school) ?? '?') + ' active students.' });
+      out.push({ school: school.name, ok: !!r.invoice, result: r.invoice ? r.invoice.invoice_number : r.error });
+    } catch (e) { out.push({ school: school.name, ok: false, result: String(e.message || e) }); }
+  }
+  return out;
+}
 
 // ----- Quotations -----
 async function quoteParty(b, cur) {
@@ -1581,7 +1621,7 @@ app.post('/api/quotes', async (req, res) => {
     const party = await quoteParty(b, null);
     if (!party.partyName) return res.status(400).json({ error: 'Please choose a school or type the name of the school you are quoting.' });
     let planType = b.planType, planModules = b.planModules;
-    if (party.schoolId && (!planType)) { const s = (await sql`SELECT plan_type, plan_modules, plan_students FROM schools WHERE id = ${party.schoolId}`)[0]; planType = s.plan_type; if (b.students == null || b.students === '') b.students = s.plan_students; planModules = planModules || s.plan_modules || []; }
+    if (party.schoolId && (!planType)) { const s = (await sql`SELECT plan_type, plan_modules, plan_students, reported_students, students_auto FROM schools WHERE id = ${party.schoolId}`)[0]; planType = s.plan_type; if (b.students == null || b.students === '') b.students = effectiveStudents(s); planModules = planModules || s.plan_modules || []; }
     let lines = b.lines;
     if (!Array.isArray(lines) || !lines.length) {
       const p = BL.priceFor({ planType, planModules, cfg, bundle, students: b.students });
@@ -2319,7 +2359,9 @@ app.post('/api/cron/run-backups', async (req, res) => {
       const result = await runBackupForSchool(school);
       results.push({ schoolId: school.id, schoolName: school.name, ok: result.ok, error: result.error });
     }
-    return res.status(200).json({ ok: true, ranAt: new Date().toISOString(), schoolCount: schools.length, results });
+    let renewals = [];
+    try { renewals = await runAutoRenewals(); } catch (e) { console.error('auto renewals error:', e); }
+    return res.status(200).json({ ok: true, ranAt: new Date().toISOString(), schoolCount: schools.length, results, renewals });
   } catch (err) {
     console.error('run-backups cron error:', err);
     return res.status(500).json({ error: 'Something went wrong running scheduled backups.' });
@@ -2551,6 +2593,11 @@ app.post('/api/ingest/heartbeat', async (req, res) => {
       UPDATE schools SET last_heartbeat_at = now(), last_heartbeat_meta = ${meta ? JSON.stringify(meta) : null}
       WHERE id = ${school.id}
     `;
+    // The school's ERP reports how many students are active right now; billing reads it from here.
+    const reported = meta && meta.activeStudents != null ? parseInt(meta.activeStudents, 10) : NaN;
+    if (!isNaN(reported) && reported >= 0 && reported <= 100000) {
+      await sql`UPDATE schools SET reported_students = ${reported}, reported_students_at = now() WHERE id = ${school.id}`;
+    }
     // Piggybacks the access-suspension flag — and, likewise, this school's
     // current Plan/Modules selection — on the heartbeat that's already on a
     // timer in every reporting-enabled school's vendor-reporting.js, rather
