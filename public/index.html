@@ -526,6 +526,7 @@
             <option value="core">Core</option>
             <option value="complete">Complete</option>
             <option value="complete_website">Complete + Website</option>
+            <option value="college">College (junior or degree college)</option>
           </optgroup>
           <optgroup label="Older plans (existing schools)">
           <option value="erp_selected_modules">ERP — Selected Modules</option>
@@ -1748,13 +1749,14 @@ const PLAN_TYPE_LABELS = {
   core: 'Core',
   complete: 'Complete',
   complete_website: 'Complete + Website',
+  college: 'College (junior or degree college)',
   erp_selected_modules: 'ERP — Selected Modules',
   erp_all_modules: 'ERP — All Modules',
   erp_all_modules_website: 'ERP — All Modules + Website',
 };
-const TIER_KEYS = ['starter', 'basic', 'core', 'complete', 'complete_website'];
-const TIER_DEFAULTS = { starter: { rate: 0, min: 0, setupRate: 0, setupMin: 0 }, basic: { rate: 30, min: 6000, setupRate: 30, setupMin: 4000 }, core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 }, complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 }, complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 } };
-const TIER_MODULES = { starter: ['fees','attendance','communications'], basic: ['fees','attendance','exams','communications'], core: ['fees','attendance','exams','communications','timetable_homework','staff_basic'], complete: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], complete_website: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'] };
+const TIER_KEYS = ['starter', 'basic', 'core', 'complete', 'complete_website', 'college'];
+const TIER_DEFAULTS = { starter: { rate: 0, min: 0, setupRate: 0, setupMin: 0 }, basic: { rate: 30, min: 6000, setupRate: 30, setupMin: 4000 }, core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 }, complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 }, complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 }, college: { rate: 100, min: 30000, setupRate: 50, setupMin: 15000 } };
+const TIER_MODULES = { starter: ['fees','attendance','communications'], basic: ['fees','attendance','exams','communications'], core: ['fees','attendance','exams','communications','timetable_homework','staff_basic'], complete: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], complete_website: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'], college: ['fees','attendance','exams','accounting','staff_basic','staff_payroll','inventory','hostel','transport','library','timetable_homework','communications'] };
 // Yearly and one-time setup for a per-student plan: the larger of the minimum and rate x students.
 function tierPrice(tier, n) {
   const c = (typeof cfgNow === 'function' ? cfgNow() : {}) || {};
@@ -3227,6 +3229,7 @@ const OB_PLANS = [
   ['core', '📗', 'Core', 'Basic plus teacher app, timetable and homework. The most popular.'],
   ['complete', '🏫', 'Complete', 'Every module (accounting, payroll, transport, hostel, library, inventory) and the parent app.'],
   ['complete_website', '🌐', 'Complete + Website', 'Everything in Complete, plus the school website and managed backups.'],
+  ['college', '🎓', 'College', 'Junior or degree college: every module, college wording, parent and student app, no website. About Rs 100 per student per year; the final price is agreed in the quote.'],
   ['erp_all_modules_website', '🌐', 'Website + complete ERP', 'The school website and every ERP module. The usual package.'],
   ['erp_all_modules', '🏫', 'Complete ERP only', 'Every ERP module, no website.'],
   ['erp_selected_modules', '🧩', 'ERP with chosen modules', 'Only the modules the school pays for. The rest stay hidden.'],

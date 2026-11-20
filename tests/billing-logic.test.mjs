@@ -79,4 +79,12 @@ t('per-student plans: yearly and setup = the larger of minimum and rate x studen
   assert.equal(B.cleanBillingConfig({ tiers: { basic: { rate: 35 } } }).tiers.basic.min, 6000);
   assert.equal(B.cleanBillingConfig({ tiers: { basic: { rate: 35 } } }).tiers.basic.rate, 35);
 });
+t('College plan: Rs 100 per student, minimum 30,000 a year; setup Rs 50 per student, minimum 15,000', () => {
+  const cfg = B.cleanBillingConfig({});
+  assert.ok(B.isTier('college')); assert.equal(B.TIER_MODULES.college.length, B.MODULE_KEYS.length); assert.equal(B.TIER_FEATURES.college.teacherLogin, true);
+  assert.deepEqual(B.priceFor({ planType: 'college', cfg, students: 300 }).lines.map(l => [l.kind, l.amount]), [['setup', 15000], ['subscription', 30000]]);
+  assert.deepEqual(B.priceFor({ planType: 'college', cfg, students: 1000 }).lines.map(l => [l.kind, l.amount]), [['setup', 50000], ['subscription', 100000]]);
+  assert.equal(B.cleanBillingConfig({ tiers: { college: { rate: 90 } } }).tiers.college.min, 30000);
+  assert.equal(B.cleanBillingConfig({ tiers: { complete: { rate: 71 } } }, { tiers: { complete: { rate: 70 } } }).tiers.college.rate, 100);
+});
 console.log('billing-logic: ' + n + ' passed');

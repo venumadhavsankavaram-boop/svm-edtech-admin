@@ -28,6 +28,7 @@ export const TIER_LABELS = {
   core: 'Core',
   complete: 'Complete',
   complete_website: 'Complete + Website',
+  college: 'College (junior or degree college)',
 };
 export const TIER_KEYS = Object.keys(TIER_LABELS);
 export const TIER_DEFAULTS = {
@@ -36,6 +37,8 @@ export const TIER_DEFAULTS = {
   core: { rate: 45, min: 9000, setupRate: 30, setupMin: 4000 },
   complete: { rate: 70, min: 18000, setupRate: 40, setupMin: 6000 },
   complete_website: { rate: 85, min: 25000, setupRate: 50, setupMin: 10000 },
+  // Junior and degree colleges: one list, every module, no website. The final price is agreed in the written quote.
+  college: { rate: 100, min: 30000, setupRate: 50, setupMin: 15000 },
 };
 // Which ERP modules each plan switches on (the school's ERP reads plan_modules).
 const CORE_SET = ['fees', 'attendance', 'exams', 'communications'];
@@ -46,6 +49,7 @@ export const TIER_MODULES = {
   core: [...CORE_SET, 'timetable_homework', 'staff_basic'],
   complete: Object.keys(MODULE_LABELS),
   complete_website: Object.keys(MODULE_LABELS),
+  college: Object.keys(MODULE_LABELS),
 };
 // Logins and apps each plan includes (the standard). A role not in the plan gets no login; connected screens disappear.
 export const TIER_FEATURES = {
@@ -54,6 +58,7 @@ export const TIER_FEATURES = {
   core:             { parentLogin: true,  teacherLogin: true,  parentApp: false, backups: 'nightly' },
   complete:         { parentLogin: true,  teacherLogin: true,  parentApp: true,  backups: 'nightly' },
   complete_website: { parentLogin: true,  teacherLogin: true,  parentApp: true,  backups: 'nightly' },
+  college:          { parentLogin: true,  teacherLogin: true,  parentApp: true,  backups: 'nightly' },
 };
 export const STARTER_FREE_LIMIT = 100;
 export const LEGACY_PLAN_TYPES = Object.keys(PLAN_LABELS);
